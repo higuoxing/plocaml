@@ -48,7 +48,11 @@ module PLOCaml = struct
     | Error -> 21
 
   external execute : string -> spi_result = "plocaml_spi_execute"
+  type plan
+
+  external prepare : string -> string array -> plan = "plocaml_spi_prepare"
   external execute_with_args : string -> datum array -> spi_result = "plocaml_spi_execute_with_args"
+  external execute_plan : plan -> datum array -> spi_result = "plocaml_spi_execute_plan"
   external _elog : int -> string -> unit = "plocaml_elog"
   let elog level msg = _elog (log_level_to_int level) msg
   let notice msg = elog Notice msg

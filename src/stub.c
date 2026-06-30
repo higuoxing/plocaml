@@ -11,6 +11,7 @@
 #include <commands/extension.h>
 #include <utils/lsyscache.h>
 #include <utils/builtins.h>
+#include <parser/parse_type.h>
 
 #include <caml/mlvalues.h>
 #include <caml/callback.h>
@@ -18,6 +19,7 @@
 #include <utils/guc.h>
 #include <caml/alloc.h>
 #include <caml/fail.h>
+#include <caml/custom.h>
 
 #define DATUM_TAG_INT 0
 #define DATUM_TAG_FLOAT 1
@@ -44,6 +46,26 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
   const void *dummy = Pg_magic_func();
   CAMLreturn(Val_unit);
 }
+
+#define Custom_plan_val(v) (*((SPIPlanPtr *) Data_custom_val(v)))
+
+static void finalize_spi_plan(value v) {
+  SPIPlanPtr plan = Custom_plan_val(v);
+  if (plan != NULL) {
+    SPI_freeplan(plan);
+  }
+}
+
+static struct custom_operations spi_plan_ops = {
+  "plocaml.spi_plan",
+  finalize_spi_plan,
+  custom_compare_default,
+  custom_hash_default,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
 
 CAMLprim value plocaml_elog(value level_val, value msg_val) {
   CAMLparam2(level_val, msg_val);
@@ -141,6 +163,145 @@ static value build_spi_result(int status, int nrows) {
   Store_field(res, 2, rows_arr);
 
   CAMLreturn(res);
+}
+
+CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
+  CAMLparam2(query_val, argtypes_val);
+  CAMLlocal1(plan_val);
+  const char *query = String_val(query_val);
+
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+  SPIPlanPtr plan = NULL;
+
+  int nargs = Wosize_val(argtypes_val);
+  Oid *argtypes = palloc(nargs * sizeof(Oid));
+
+  PG_TRY();
+  {
+    for (int i = 0; i < nargs; i++) {
+      char *type_name = String_val(Field(argtypes_val, i));
+      Oid type_id;
+      int32 typmod;
+      parseTypeString(type_name, &type_id, &typmod, false);
+      argtypes[i] = type_id;
+    }
+
+    plan = SPI_prepare(query, nargs, argtypes);
+    if (plan != NULL) {
+      SPI_keepplan(plan); // Keep it alive across SPI_finish
+    } else {
+      failed = true;
+    }
+  }
+  PG_CATCH();
+  {
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  pfree(argtypes);
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_prepare failed");
+    }
+  }
+
+  plan_val = caml_alloc_custom(&spi_plan_ops, sizeof(SPIPlanPtr), 0, 1);
+  Custom_plan_val(plan_val) = plan;
+
+  SPI_finish();
+  CAMLreturn(plan_val);
+}
+
+CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
+  CAMLparam2(plan_val, args_val);
+
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  SPIPlanPtr plan = Custom_plan_val(plan_val);
+  if (plan == NULL) {
+    SPI_finish();
+    caml_failwith("PL/OCaml: attempt to execute a freed plan");
+  }
+
+  int res = 0;
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+
+  int nargs = Wosize_val(args_val);
+  Datum *Values = palloc(nargs * sizeof(Datum));
+  char *Nulls = palloc(nargs * sizeof(char));
+
+  for (int i = 0; i < nargs; i++) {
+    value elem = Field(args_val, i);
+    if (Is_long(elem)) {
+      Values[i] = (Datum) 0;
+      Nulls[i] = 'n';
+    } else {
+      Nulls[i] = ' ';
+      int e_tag = Tag_val(elem);
+      if (e_tag == DATUM_TAG_INT) {
+        Values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_FLOAT) {
+        Values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_STRING) {
+        Values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_BOOL) {
+        Values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
+      } else {
+        caml_failwith("PL/OCaml: unsupported argument type for SPI_execute_plan");
+      }
+    }
+  }
+
+  PG_TRY();
+  {
+    res = SPI_execute_plan(plan, Values, Nulls, false, 0);
+    if (res < 0) {
+      failed = true;
+    }
+  }
+  PG_CATCH();
+  {
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  pfree(Values);
+  pfree(Nulls);
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_execute_plan failed");
+    }
+  }
+
+  int rows = SPI_processed;
+  value result = build_spi_result(res, rows);
+  SPI_finish();
+  CAMLreturn(result);
 }
 
 CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {

@@ -67,3 +67,27 @@ AS $$
 $$;
 
 SELECT result_empty_test();
+
+CREATE FUNCTION result_str_test(cmd text) RETURNS text
+LANGUAGE plocaml
+AS $$
+  let cmd_str = PL.to_string ~default:"" args.(0) in
+  let plan = PL.prepare cmd_str [| |] in
+  let rv = PL.execute_plan plan [| |] in
+  let row_to_str row =
+    let cols = List.map (fun (k, v) ->
+      let v_str = match v with
+        | PL.Int i -> string_of_int i
+        | PL.String s -> "'" ^ s ^ "'"
+        | _ -> "..."
+      in
+      Printf.sprintf "'%s': %s" k v_str
+    ) row in
+    "{" ^ String.concat ", " cols ^ "}"
+  in
+  let rows_str = String.concat ", " (Array.to_list (Array.map row_to_str rv.rows)) in
+  PL.String (Printf.sprintf "<PLocamlResult status=%d nrows=%d rows=[%s]>" rv.status rv.nrows rows_str)
+$$;
+
+SELECT result_str_test($$SELECT 1 AS foo UNION SELECT 2$$);
+SELECT result_str_test($$CREATE TEMPORARY TABLE foo1 (a int, b text)$$);
