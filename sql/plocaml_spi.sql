@@ -91,3 +91,104 @@ $$;
 
 SELECT result_str_test($$SELECT 1 AS foo UNION SELECT 2$$);
 SELECT result_str_test($$CREATE TEMPORARY TABLE foo1 (a int, b text)$$);
+
+-- cursor objects
+CREATE TABLE users (
+    fname text,
+    lname text
+);
+INSERT INTO users VALUES
+  ('rick', 'smith'),
+  ('john', 'doe'),
+  ('jane', 'doe'),
+  ('willem', 'doe');
+CREATE FUNCTION simple_cursor_test() RETURNS int
+LANGUAGE plocaml
+AS $$
+  let res = PL.cursor "select fname, lname from users" in
+  let rv = PL.fetch res 100 in
+  let does = ref 0 in
+  Array.iter (fun row ->
+    let lname = PL.to_string ~default:"" (List.assoc "lname" row) in
+    if lname = "doe" then does := !does + 1
+  ) rv.rows;
+  PL.close res;
+  PL.Int !does
+$$;
+
+SELECT simple_cursor_test();
+
+CREATE FUNCTION double_cursor_close() RETURNS int
+LANGUAGE plocaml
+AS $$
+  let res = PL.cursor "select fname, lname from users" in
+  PL.close res;
+  PL.close res;
+  PL.Null
+$$;
+
+SELECT double_cursor_close();
+
+CREATE FUNCTION cursor_fetch() RETURNS int
+LANGUAGE plocaml
+AS $$
+  let res = PL.cursor "select fname, lname from users" in
+  let rv1 = PL.fetch res 3 in
+  if rv1.nrows <> 3 then failwith "fetch 3 failed";
+  let rv2 = PL.fetch res 3 in
+  if rv2.nrows <> 1 then failwith "fetch 1 failed";
+  let rv3 = PL.fetch res 3 in
+  if rv3.nrows <> 0 then failwith "fetch 0 failed";
+  PL.close res;
+  PL.Null
+$$;
+
+SELECT cursor_fetch();
+
+CREATE FUNCTION fetch_after_close() RETURNS int
+LANGUAGE plocaml
+AS $$
+  let res = PL.cursor "select fname, lname from users" in
+  PL.close res;
+  let _ = PL.fetch res 1 in
+  PL.Null
+$$;
+
+SELECT fetch_after_close();
+
+CREATE FUNCTION cursor_plan() RETURNS text
+LANGUAGE plocaml
+AS $$
+  let plan = PL.prepare "select fname, lname from users where fname like $1 || '%' order by fname" [| "text" |] in
+  let res1 = PL.cursor_plan plan [| PL.String "w" |] in
+  let rv1 = PL.fetch res1 10 in
+  let fname1 = PL.to_string ~default:"" (List.assoc "fname" rv1.rows.(0)) in
+  PL.close res1;
+
+  let res2 = PL.cursor_plan plan [| PL.String "j" |] in
+  let rv2 = PL.fetch res2 10 in
+  let fname2 = PL.to_string ~default:"" (List.assoc "fname" rv2.rows.(0)) in
+  PL.close res2;
+
+  PL.String (fname1 ^ ", " ^ fname2)
+$$;
+
+SELECT cursor_plan();
+
+CREATE FUNCTION cursor_plan_wrong_args() RETURNS text
+LANGUAGE plocaml
+AS $$
+  let plan = PL.prepare "select fname, lname from users where fname like $1 || '%'" [| "text" |] in
+  let _ = PL.cursor_plan plan [| PL.String "a"; PL.String "b" |] in
+  PL.String "should not reach here"
+$$;
+SELECT cursor_plan_wrong_args();
+CREATE FUNCTION execute_plan_wrong_args() RETURNS text
+LANGUAGE plocaml
+AS $$
+  let plan = PL.prepare "select fname, lname from users where fname like $1 || '%'" [| "text" |] in
+  let _ = PL.execute_plan plan [| PL.String "a"; PL.String "b" |] in
+  PL.String "should not reach here"
+$$;
+SELECT execute_plan_wrong_args();
+DROP TABLE users;

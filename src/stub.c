@@ -48,6 +48,25 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
 }
 
 #define Custom_plan_val(v) (*((SPIPlanPtr *) Data_custom_val(v)))
+#define Custom_cursor_val(v) (*((Portal *) Data_custom_val(v)))
+
+static void finalize_spi_cursor(value v) {
+  Portal cursor = Custom_cursor_val(v);
+  if (cursor != NULL) {
+    SPI_cursor_close(cursor);
+  }
+}
+
+static struct custom_operations spi_cursor_ops = {
+  "plocaml.spi_cursor",
+  finalize_spi_cursor,
+  custom_compare_default,
+  custom_hash_default,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
 
 static void finalize_spi_plan(value v) {
   SPIPlanPtr plan = Custom_plan_val(v);
@@ -170,6 +189,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
   CAMLlocal1(plan_val);
   const char *query = String_val(query_val);
 
+  MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");
   }
@@ -200,6 +220,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
   }
   PG_CATCH();
   {
+    MemoryContextSwitchTo(caller_context);
     edata = CopyErrorData();
     FlushErrorState();
     failed = true;
@@ -229,6 +250,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
 CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
   CAMLparam2(plan_val, args_val);
 
+  MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");
   }
@@ -239,11 +261,17 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
     caml_failwith("PL/OCaml: attempt to execute a freed plan");
   }
 
+  int expected_nargs = SPI_getargcount(plan);
+  int nargs = Wosize_val(args_val);
+  if (nargs != expected_nargs) {
+    SPI_finish();
+    caml_failwith("PL/OCaml: incorrect number of arguments for plan");
+  }
+
   int res = 0;
   volatile bool failed = false;
   ErrorData *edata = NULL;
 
-  int nargs = Wosize_val(args_val);
   Datum *Values = palloc(nargs * sizeof(Datum));
   char *Nulls = palloc(nargs * sizeof(char));
 
@@ -278,6 +306,7 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
   }
   PG_CATCH();
   {
+    MemoryContextSwitchTo(caller_context);
     edata = CopyErrorData();
     FlushErrorState();
     failed = true;
@@ -304,10 +333,211 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
   CAMLreturn(result);
 }
 
+CAMLprim value plocaml_spi_cursor(value query_val) {
+  CAMLparam1(query_val);
+  CAMLlocal1(cursor_val);
+  const char *query = String_val(query_val);
+
+  MemoryContext caller_context = CurrentMemoryContext;
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+  Portal cursor = NULL;
+  SPIPlanPtr plan = NULL;
+
+  PG_TRY();
+  {
+    plan = SPI_prepare(query, 0, NULL);
+    if (plan != NULL) {
+      SPI_keepplan(plan);
+      cursor = SPI_cursor_open(NULL, plan, NULL, NULL, false);
+      SPI_freeplan(plan);
+    } else {
+      failed = true;
+    }
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(caller_context);
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_cursor failed");
+    }
+  }
+
+  cursor_val = caml_alloc_custom(&spi_cursor_ops, sizeof(Portal), 0, 1);
+  Custom_cursor_val(cursor_val) = cursor;
+
+  SPI_finish();
+  CAMLreturn(cursor_val);
+}
+
+CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
+  CAMLparam2(plan_val, args_val);
+  CAMLlocal1(cursor_val);
+
+  MemoryContext caller_context = CurrentMemoryContext;
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  SPIPlanPtr plan = Custom_plan_val(plan_val);
+  if (plan == NULL) {
+    SPI_finish();
+    caml_failwith("PL/OCaml: attempt to create cursor from a freed plan");
+  }
+
+  int expected_nargs = SPI_getargcount(plan);
+  int nargs = Wosize_val(args_val);
+  if (nargs != expected_nargs) {
+    SPI_finish();
+    caml_failwith("PL/OCaml: incorrect number of arguments for plan");
+  }
+
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+  Portal cursor = NULL;
+
+  Datum *Values = palloc(nargs * sizeof(Datum));
+  char *Nulls = palloc(nargs * sizeof(char));
+
+  for (int i = 0; i < nargs; i++) {
+    value elem = Field(args_val, i);
+    if (Is_long(elem)) {
+      Values[i] = (Datum) 0;
+      Nulls[i] = 'n';
+    } else {
+      Nulls[i] = ' ';
+      int e_tag = Tag_val(elem);
+      if (e_tag == DATUM_TAG_INT) {
+        Values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_FLOAT) {
+        Values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_STRING) {
+        Values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_BOOL) {
+        Values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
+      } else {
+        caml_failwith("PL/OCaml: unsupported argument type for SPI_cursor_plan");
+      }
+    }
+  }
+
+  PG_TRY();
+  {
+    cursor = SPI_cursor_open(NULL, plan, Values, Nulls, false);
+    if (cursor == NULL) {
+      failed = true;
+    }
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(caller_context);
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  pfree(Values);
+  pfree(Nulls);
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_cursor_plan failed");
+    }
+  }
+
+  cursor_val = caml_alloc_custom(&spi_cursor_ops, sizeof(Portal), 0, 1);
+  Custom_cursor_val(cursor_val) = cursor;
+
+  SPI_finish();
+  CAMLreturn(cursor_val);
+}
+
+CAMLprim value plocaml_spi_fetch(value cursor_val, value count_val) {
+  CAMLparam2(cursor_val, count_val);
+
+  MemoryContext caller_context = CurrentMemoryContext;
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  Portal cursor = Custom_cursor_val(cursor_val);
+  if (cursor == NULL) {
+    SPI_finish();
+    caml_failwith("PL/OCaml: attempt to fetch from a closed cursor");
+  }
+
+  int count = Int_val(count_val);
+  int res = 0;
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+
+  PG_TRY();
+  {
+    SPI_cursor_fetch(cursor, true, count);
+    res = SPI_processed;
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(caller_context);
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_fetch failed");
+    }
+  }
+
+  value result = build_spi_result(SPI_OK_FETCH, res);
+  SPI_finish();
+  CAMLreturn(result);
+}
+
+CAMLprim value plocaml_spi_close(value cursor_val) {
+  CAMLparam1(cursor_val);
+  Portal cursor = Custom_cursor_val(cursor_val);
+  if (cursor != NULL) {
+    SPI_cursor_close(cursor);
+    Custom_cursor_val(cursor_val) = NULL;
+  }
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
   CAMLparam2(query_val, args_val);
   const char *query = String_val(query_val);
   
+  MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");
   }
@@ -357,6 +587,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
   }
   PG_CATCH();
   {
+    MemoryContextSwitchTo(caller_context);
     edata = CopyErrorData();
     FlushErrorState();
     failed = true;
@@ -388,6 +619,7 @@ CAMLprim value plocaml_spi_execute(value query_val) {
   CAMLparam1(query_val);
   const char *query = String_val(query_val);
   
+  MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");
   }
@@ -405,6 +637,7 @@ CAMLprim value plocaml_spi_execute(value query_val) {
   }
   PG_CATCH();
   {
+    MemoryContextSwitchTo(caller_context);
     edata = CopyErrorData();
     FlushErrorState();
     failed = true;

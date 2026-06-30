@@ -19,6 +19,18 @@ let () = ignore plocaml_spi_execute_with_args
 external plocaml_spi_execute_plan : Bootstrap.PLOCaml.plan -> Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.spi_result = "plocaml_spi_execute_plan"
 let () = ignore plocaml_spi_execute_plan
 
+external plocaml_spi_cursor : string -> Bootstrap.PLOCaml.cursor = "plocaml_spi_cursor"
+let () = ignore plocaml_spi_cursor
+
+external plocaml_spi_cursor_plan : Bootstrap.PLOCaml.plan -> Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.cursor = "plocaml_spi_cursor_plan"
+let () = ignore plocaml_spi_cursor_plan
+
+external plocaml_spi_fetch : Bootstrap.PLOCaml.cursor -> int -> Bootstrap.PLOCaml.spi_result = "plocaml_spi_fetch"
+let () = ignore plocaml_spi_fetch
+
+external plocaml_spi_close : Bootstrap.PLOCaml.cursor -> unit = "plocaml_spi_close"
+let () = ignore plocaml_spi_close
+
 external plocaml_elog : int -> string -> unit = "plocaml_elog"
 let () = ignore plocaml_elog
 

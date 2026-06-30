@@ -7,7 +7,6 @@ compile_commands.json
 
 # tests
 *.diffs
-*.out
 results/
 
 # Build directory

@@ -53,6 +53,13 @@ module PLOCaml = struct
   external prepare : string -> string array -> plan = "plocaml_spi_prepare"
   external execute_with_args : string -> datum array -> spi_result = "plocaml_spi_execute_with_args"
   external execute_plan : plan -> datum array -> spi_result = "plocaml_spi_execute_plan"
+
+  type cursor
+
+  external cursor : string -> cursor = "plocaml_spi_cursor"
+  external cursor_plan : plan -> datum array -> cursor = "plocaml_spi_cursor_plan"
+  external fetch : cursor -> int -> spi_result = "plocaml_spi_fetch"
+  external close : cursor -> unit = "plocaml_spi_close"
   external _elog : int -> string -> unit = "plocaml_elog"
   let elog level msg = _elog (log_level_to_int level) msg
   let notice msg = elog Notice msg

@@ -1,0 +1,5 @@
+DO $$ PL.notice "This is plocaml." $$ LANGUAGE plocaml;
+NOTICE:  This is plocaml.
+DO $$ failwith "error test" $$ LANGUAGE plocaml;
+ERROR:  PL/OCaml execution failed
+DETAIL:  Exception during execution: Failure("error test")
