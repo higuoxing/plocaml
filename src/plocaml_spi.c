@@ -1,16 +1,16 @@
 #include "plocaml.h"
-#include <executor/spi.h>
-#include <utils/memutils.h>
-#include <utils/elog.h>
-#include <utils/builtins.h>
-#include <parser/parse_type.h>
 #include <caml/alloc.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
-#include <caml/custom.h>
+#include <executor/spi.h>
+#include <parser/parse_type.h>
+#include <utils/builtins.h>
+#include <utils/elog.h>
+#include <utils/memutils.h>
 
-#define Custom_plan_val(v) (*((SPIPlanPtr *) Data_custom_val(v)))
-#define Custom_cursor_val(v) (*((Portal *) Data_custom_val(v)))
+#define Custom_plan_val(v) (*((SPIPlanPtr *)Data_custom_val(v)))
+#define Custom_cursor_val(v) (*((Portal *)Data_custom_val(v)))
 
 static void finalize_spi_cursor(value v) {
   Portal cursor = Custom_cursor_val(v);
@@ -20,15 +20,10 @@ static void finalize_spi_cursor(value v) {
 }
 
 static struct custom_operations spi_cursor_ops = {
-  "plocaml.spi_cursor",
-  finalize_spi_cursor,
-  custom_compare_default,
-  custom_hash_default,
-  custom_serialize_default,
-  custom_deserialize_default,
-  custom_compare_ext_default,
-  custom_fixed_length_default
-};
+    "plocaml.spi_cursor",       finalize_spi_cursor,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
 
 static void finalize_spi_plan(value v) {
   SPIPlanPtr plan = Custom_plan_val(v);
@@ -38,15 +33,10 @@ static void finalize_spi_plan(value v) {
 }
 
 static struct custom_operations spi_plan_ops = {
-  "plocaml.spi_plan",
-  finalize_spi_plan,
-  custom_compare_default,
-  custom_hash_default,
-  custom_serialize_default,
-  custom_deserialize_default,
-  custom_compare_ext_default,
-  custom_fixed_length_default
-};
+    "plocaml.spi_plan",         finalize_spi_plan,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
 
 static value build_spi_result(int status, int nrows) {
   CAMLparam0();
@@ -187,7 +177,7 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
   for (int i = 0; i < nargs; i++) {
     value elem = Field(args_val, i);
     if (Is_long(elem)) {
-      Values[i] = (Datum) 0;
+      Values[i] = (Datum)0;
       Nulls[i] = 'n';
     } else {
       Nulls[i] = ' ';
@@ -201,7 +191,8 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
       } else if (e_tag == DATUM_TAG_BOOL) {
         Values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
       } else {
-        caml_failwith("PL/OCaml: unsupported argument type for SPI_execute_plan");
+        caml_failwith(
+            "PL/OCaml: unsupported argument type for SPI_execute_plan");
       }
     }
   }
@@ -327,7 +318,7 @@ CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
   for (int i = 0; i < nargs; i++) {
     value elem = Field(args_val, i);
     if (Is_long(elem)) {
-      Values[i] = (Datum) 0;
+      Values[i] = (Datum)0;
       Nulls[i] = 'n';
     } else {
       Nulls[i] = ' ';
@@ -341,7 +332,8 @@ CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
       } else if (e_tag == DATUM_TAG_BOOL) {
         Values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
       } else {
-        caml_failwith("PL/OCaml: unsupported argument type for SPI_cursor_plan");
+        caml_failwith(
+            "PL/OCaml: unsupported argument type for SPI_cursor_plan");
       }
     }
   }
@@ -445,7 +437,7 @@ CAMLprim value plocaml_spi_close(value cursor_val) {
 CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
   CAMLparam2(query_val, args_val);
   const char *query = String_val(query_val);
-  
+
   MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");
@@ -464,7 +456,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
     value elem = Field(args_val, i);
     if (Is_long(elem)) {
       argtypes[i] = TEXTOID; // Default to text for nulls
-      Values[i] = (Datum) 0;
+      Values[i] = (Datum)0;
       Nulls[i] = 'n';
     } else {
       Nulls[i] = ' ';
@@ -489,7 +481,8 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
 
   PG_TRY();
   {
-    res = SPI_execute_with_args(query, nargs, argtypes, Values, Nulls, false, 0);
+    res =
+        SPI_execute_with_args(query, nargs, argtypes, Values, Nulls, false, 0);
     if (res < 0) {
       failed = true;
     }
@@ -517,7 +510,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
       caml_failwith("PL/OCaml SPI_execute_with_args failed");
     }
   }
-  
+
   int rows = SPI_processed;
   value result = build_spi_result(res, rows);
   SPI_finish();
@@ -527,7 +520,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
 CAMLprim value plocaml_spi_execute(value query_val) {
   CAMLparam1(query_val);
   const char *query = String_val(query_val);
-  
+
   MemoryContext caller_context = CurrentMemoryContext;
   if (SPI_connect() != SPI_OK_CONNECT) {
     caml_failwith("PL/OCaml: could not connect to SPI manager");

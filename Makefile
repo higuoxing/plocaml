@@ -14,3 +14,6 @@ plocaml$(DLSUFFIX): src/runtime.ml src/stub.c src/bootstrap.ml
 clean-dune:
 	dune clean
 clean: clean-dune
+
+format:
+	clang-format -i src/*.c src/*.h

@@ -1,8 +1,8 @@
 #ifndef PLOCAML_H
 #define PLOCAML_H
 
-#include <postgres.h>
 #include <caml/mlvalues.h>
+#include <postgres.h>
 
 #define DATUM_TAG_INT 0
 #define DATUM_TAG_FLOAT 1
