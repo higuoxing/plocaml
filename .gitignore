@@ -1,0 +1,14 @@
+compile_commands.json
+
+# Object files
+*.o
+*.dylib
+*.so
+
+# tests
+*.diffs
+*.out
+results/
+
+# Build directory
+_build/

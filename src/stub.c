@@ -1,0 +1,247 @@
+#include <postgres.h>
+#include <fmgr.h>
+#include <utils/builtins.h>
+#include <catalog/pg_proc.h>
+#include <catalog/pg_type.h>
+#include <utils/syscache.h>
+#include <executor/spi.h>
+#include <funcapi.h>
+#include <access/htup_details.h>
+
+#include <caml/mlvalues.h>
+#include <caml/callback.h>
+#include <caml/memory.h>
+#include <caml/alloc.h>
+
+PG_MODULE_MAGIC;
+
+const char plocaml_bootstrap_code[] = {
+#embed "bootstrap.ml"
+  , '\0'
+};
+
+CAMLprim value plocaml_magic_keepalive(value unit) {
+  CAMLparam1(unit);
+  extern const Pg_magic_struct * Pg_magic_func(void);
+  const void *dummy = Pg_magic_func();
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value plocaml_notice(value msg_val) {
+  CAMLparam1(msg_val);
+  const char *msg = String_val(msg_val);
+  ereport(NOTICE, (errmsg("%s", msg)));
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value plocaml_spi_execute(value query_val) {
+  CAMLparam1(query_val);
+  const char *query = String_val(query_val);
+  
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("PL/OCaml: could not connect to SPI manager")));
+  }
+
+  int res = SPI_execute(query, false, 0);
+  if (res < 0) {
+    SPI_finish();
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("PL/OCaml SPI_execute failed"),
+             errdetail("Query: %s", query)));
+  }
+  
+  int rows = SPI_processed;
+  SPI_finish();
+  CAMLreturn(Val_int(rows));
+}
+
+void _PG_init(void) {
+  char *caml_argv[] = {"postgres_plocaml", NULL};
+  caml_startup(caml_argv);
+
+  /* Initialize top level. */
+  const value *init_top_level_fn = caml_named_value("plocaml_init_toplevel");
+  if (init_top_level_fn)
+    caml_callback(*init_top_level_fn, caml_copy_string(plocaml_bootstrap_code));
+}
+
+PG_FUNCTION_INFO_V1(plocaml_call_handler);
+
+Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
+  int oid = fcinfo->flinfo->fn_oid;
+  bool isnull;
+  HeapTuple procTup;
+  Datum prosrc;
+  char *user_sql_code;
+  int nargs;
+  value args_arr, res;
+
+  procTup = SearchSysCache1(PROCOID, ObjectIdGetDatum(oid));
+  if (!HeapTupleIsValid(procTup)) {
+    elog(ERROR, "cache lookup failed for function %u", oid);
+  }
+
+  prosrc = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_prosrc, &isnull);
+  if (isnull) {
+    ReleaseSysCache(procTup);
+    elog(ERROR, "null prosrc for function %u", oid);
+  }
+
+  user_sql_code = TextDatumGetCString(prosrc);
+  ReleaseSysCache(procTup);
+  prosrc = (Datum) 0;
+
+  // Remove all notices
+  // Convert Postgres arguments to OCaml arguments array
+  nargs = PG_NARGS();
+  args_arr = caml_alloc(nargs, 0); // 0 tag for Tuple/Array
+  for (int i = 0; i < nargs; i++) {
+    value v;
+    if (PG_ARGISNULL(i)) {
+      v = Val_int(0); // Null variant (integer 0)
+    } else {
+      Oid type_oid = get_fn_expr_argtype(fcinfo->flinfo, i);
+      Datum arg = PG_GETARG_DATUM(i);
+      
+      if (type_oid == INT4OID) {
+        v = caml_alloc(1, 0); // Int of int (tag 0)
+        Store_field(v, 0, Val_int(DatumGetInt32(arg)));
+      } else if (type_oid == FLOAT8OID) {
+        v = caml_alloc(1, 1); // Float of float (tag 1)
+        value f = caml_copy_double(DatumGetFloat8(arg));
+        Store_field(v, 0, f);
+      } else if (type_oid == TEXTOID || type_oid == VARCHAROID) {
+        v = caml_alloc(1, 2); // String of string (tag 2)
+        char *str = TextDatumGetCString(arg);
+        value s = caml_copy_string(str);
+        Store_field(v, 0, s);
+        pfree(str);
+      } else if (type_oid == BOOLOID) {
+        v = caml_alloc(1, 3); // Bool of bool (tag 3)
+        bool b = DatumGetBool(arg);
+        Store_field(v, 0, Val_int(b ? 1 : 0));
+      } else {
+        elog(ERROR, "PL/OCaml: unsupported argument type OID %u", type_oid);
+      }
+    }
+    Store_field(args_arr, i, v);
+  }
+
+  const value *execute_fn = caml_named_value("plocaml_execute");
+  if (!execute_fn) {
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("PL/OCaml engine error"),
+             errdetail("Execute function not found.")));
+  }
+
+  // plocaml_execute : int -> string -> int array -> execution_result
+  res = caml_callback3(*execute_fn, Val_int(oid), caml_copy_string(user_sql_code), args_arr);
+  
+  if (Is_block(res)) {
+    int tag = Tag_val(res);
+    
+    if (tag == 0) {
+      // Ok of datum
+      value datum_val = Field(res, 0);
+      
+      // If it's a procedure (void return type), enforce returning Null
+      if (get_fn_expr_rettype(fcinfo->flinfo) == VOIDOID) {
+        if (!Is_long(datum_val)) {
+          ereport(ERROR,
+                  (errcode(ERRCODE_DATATYPE_MISMATCH),
+                   errmsg("PL/OCaml procedure did not return Null")));
+        }
+        fcinfo->isnull = true;
+        return (Datum) 0;
+      }
+
+      if (Is_long(datum_val)) {
+        // Null
+        fcinfo->isnull = true;
+        return (Datum) 0;
+      } else {
+        int d_tag = Tag_val(datum_val);
+        Datum return_datum;
+
+        if (d_tag == 0) { // Int of int
+          int result = Int_val(Field(datum_val, 0));
+          return_datum = Int32GetDatum(result);
+        } else if (d_tag == 1) { // Float of float
+          double result = Double_val(Field(datum_val, 0));
+          return_datum = Float8GetDatum(result);
+        } else if (d_tag == 2) { // String of string
+          const char *result = String_val(Field(datum_val, 0));
+          return_datum = CStringGetTextDatum(result);
+        } else if (d_tag == 3) { // Bool of bool
+          bool result = (Int_val(Field(datum_val, 0)) != 0);
+          return_datum = BoolGetDatum(result);
+        } else if (d_tag == 4) { // Array of datum array
+          TupleDesc tupdesc;
+          if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
+            ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("function returning record called in context that cannot accept type record")));
+          }
+          
+          BlessTupleDesc(tupdesc);
+          
+          value arr = Field(datum_val, 0);
+          int arr_len = Wosize_val(arr);
+          if (arr_len != tupdesc->natts) {
+             ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH), errmsg("PL/OCaml array length %d does not match expected record length %d", arr_len, tupdesc->natts)));
+          }
+
+          Datum *values = palloc(tupdesc->natts * sizeof(Datum));
+          bool *nulls = palloc(tupdesc->natts * sizeof(bool));
+
+          for (int i = 0; i < tupdesc->natts; i++) {
+             value elem = Field(arr, i);
+             if (Is_long(elem)) {
+                 nulls[i] = true;
+                 values[i] = (Datum) 0;
+             } else {
+                 nulls[i] = false;
+                 int e_tag = Tag_val(elem);
+                 if (e_tag == 0) {
+                     values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
+                 } else if (e_tag == 1) {
+                     values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
+                 } else if (e_tag == 2) {
+                     values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
+                 } else if (e_tag == 3) {
+                     values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
+                 } else {
+                     elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag in array element.");
+                 }
+             }
+          }
+          
+          HeapTuple tuple = heap_form_tuple(tupdesc, values, nulls);
+          return_datum = heap_copy_tuple_as_datum(tuple, tupdesc);
+          heap_freetuple(tuple);
+        } else {
+          elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag.");
+        }
+        
+        return return_datum;
+      }
+    } else if (tag == 1) {
+      // SyntaxError of string
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_SYNTAX_ERROR),
+               errmsg("PL/OCaml syntax error"),
+               errdetail("%s", err_msg)));
+    } else {
+      // RuntimeError of string
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+               errmsg("PL/OCaml execution failed"),
+               errdetail("%s", err_msg)));
+    }
+  }
+
+  elog(ERROR, "PL/OCaml engine error: Unexpected return variant from OCaml.");
+  pg_unreachable();
+}

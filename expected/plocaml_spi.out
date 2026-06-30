@@ -1,0 +1,20 @@
+CREATE EXTENSION IF NOT EXISTS plocaml;
+NOTICE:  extension "plocaml" already exists, skipping
+CREATE TABLE test1 (a int);
+CREATE PROCEDURE test_proc3(x int)
+LANGUAGE plocaml
+AS $$
+  let x_val = match args.(0) with PL.Int x -> x | _ -> 0 in
+  let query = "INSERT INTO test1 VALUES (" ^ string_of_int x_val ^ ")" in
+  let _ = PL.execute query in
+  PL.Null
+$$;
+CALL test_proc3(55);
+SELECT * FROM test1;
+ a  
+----
+ 55
+(1 row)
+
+DROP PROCEDURE test_proc3;
+DROP TABLE test1;
