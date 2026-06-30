@@ -39,7 +39,14 @@ let init_toplevel bootstrap_code guc_stdlib_path =
   | End_of_file -> ()
 
 let compile_function oid func_name code_str buf fmt =
-  let wrapper = Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;;" oid func_name code_str in
+  let wrapper = 
+    if oid = 0 then
+      (* For DO blocks (oid = 0), we don't expect a return value, just unit.
+         We wrap it to return PL.Null so the rest of the engine works normally. *)
+      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;\nPL.Null;;" oid func_name code_str
+    else
+      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;;" oid func_name code_str
+  in
   let lexbuf = Lexing.from_string wrapper in
   try
     let phrase = !Toploop.parse_toplevel_phrase lexbuf in
@@ -47,7 +54,7 @@ let compile_function oid func_name code_str buf fmt =
       let val_name = Printf.sprintf "_plocaml_fn_%d" oid in
       let v = Toploop.getvalue val_name in
       let f : Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.datum = Obj.magic v in
-      Hashtbl.add function_cache oid f;
+      if oid <> 0 then Hashtbl.add function_cache oid f;
       Stdlib.Result.Ok f
     else
       Stdlib.Result.Error (RuntimeError (Buffer.contents buf))
@@ -67,9 +74,12 @@ let execute_pl_code oid func_name code_str args =
   let buf = Buffer.create 128 in
   let fmt = formatter_of_buffer buf in
   let func_opt =
-    match Hashtbl.find_opt function_cache oid with
-    | Some f -> Stdlib.Result.Ok f
-    | None -> compile_function oid func_name code_str buf fmt
+    if oid == 0 then
+      compile_function oid func_name code_str buf fmt
+    else
+      match Hashtbl.find_opt function_cache oid with
+      | Some f -> Stdlib.Result.Ok f
+      | None -> compile_function oid func_name code_str buf fmt
   in
   match func_opt with
   | Stdlib.Result.Error e -> e

@@ -8,6 +8,7 @@
 #include <executor/spi.h>
 #include <funcapi.h>
 #include <access/htup_details.h>
+#include <commands/extension.h>
 
 #include <caml/mlvalues.h>
 #include <caml/callback.h>
@@ -123,6 +124,64 @@ void _PG_init(void) {
 }
 
 PG_FUNCTION_INFO_V1(plocaml_call_handler);
+PG_FUNCTION_INFO_V1(plocaml_inline_handler);
+
+Datum plocaml_inline_handler(PG_FUNCTION_ARGS) {
+  InlineCodeBlock *codeblock = (InlineCodeBlock *) DatumGetPointer(PG_GETARG_DATUM(0));
+  char *user_sql_code = codeblock->source_text;
+  char *func_name = "inline_code_block";
+  int oid = 0;
+  value args_arr, res;
+
+  args_arr = caml_alloc(0, 0); // Empty array
+
+  const value *execute_fn = caml_named_value("plocaml_execute");
+  if (!execute_fn) {
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("PL/OCaml engine error"),
+             errdetail("Execute function not found.")));
+  }
+
+  value callback_args[] = {Val_int(oid), caml_copy_string(func_name), caml_copy_string(user_sql_code), args_arr};
+  res = caml_callbackN_exn(*execute_fn, 4, callback_args);
+  
+  if (Is_exception_result(res)) {
+    res = Extract_exception(res);
+    char *err_msg = strdup(String_val(Field(res, 0))); // simplified exception message
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("PL/OCaml fatal engine exception"),
+             errdetail("%s", err_msg)));
+  }
+
+  if (Is_block(res)) {
+    int tag = Tag_val(res);
+    
+    if (tag == RESULT_TAG_OK) {
+      PG_RETURN_VOID();
+    } else if (tag == RESULT_TAG_SYNTAX_ERROR) {
+      // SyntaxError of string
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_SYNTAX_ERROR),
+               errmsg("PL/OCaml syntax error"),
+               errdetail("%s", err_msg)));
+    } else if (tag == RESULT_TAG_RUNTIME_ERROR) {
+      // RuntimeError of string
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+               errmsg("PL/OCaml execution failed"),
+               errdetail("%s", err_msg)));
+    } else {
+      elog(ERROR, "PL/OCaml engine error: Unexpected return variant tag from OCaml.");
+    }
+  }
+
+  elog(ERROR, "PL/OCaml engine error: Unexpected return variant from OCaml.");
+  pg_unreachable();
+}
 
 Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
   int oid = fcinfo->flinfo->fn_oid;
