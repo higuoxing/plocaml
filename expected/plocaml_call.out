@@ -15,7 +15,7 @@ AS $$
   PL.Int 5
 $$;
 CALL test_proc2();
-ERROR:  PL/OCaml procedure did not return Null
+ERROR:  PL/OCaml function with return type "void" did not return Null
 CREATE TABLE test1 (a int);
 CREATE PROCEDURE test_proc3(x int)
 LANGUAGE plocaml

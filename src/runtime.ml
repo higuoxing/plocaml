@@ -31,8 +31,8 @@ let init_toplevel bootstrap_code =
   with
   | End_of_file -> ()
 
-let compile_function oid code_str buf fmt =
-  let wrapper = Printf.sprintf "let _plocaml_fn_%d (args : PLOCaml.datum array) : PLOCaml.datum =\n%s;;" oid code_str in
+let compile_function oid func_name code_str buf fmt =
+  let wrapper = Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;;" oid func_name code_str in
   let lexbuf = Lexing.from_string wrapper in
   try
     let phrase = !Toploop.parse_toplevel_phrase lexbuf in
@@ -46,21 +46,23 @@ let compile_function oid code_str buf fmt =
       Stdlib.Result.Error (RuntimeError (Buffer.contents buf))
   with
   | Syntaxerr.Error _ | Lexer.Error _ as e ->
-      Location.report_exception fmt e;
+      (try Location.report_exception fmt e with _ -> ());
       Format.pp_print_flush fmt ();
       Stdlib.Result.Error (SyntaxError (Buffer.contents buf))
   | e ->
-      Location.report_exception fmt e;
+      (try Location.report_exception fmt e with _ -> ());
       Format.pp_print_flush fmt ();
-      Stdlib.Result.Error (RuntimeError (Buffer.contents buf))
+      let msg = Buffer.contents buf in
+      let msg = if msg = "" then Printexc.to_string e else msg in
+      Stdlib.Result.Error (RuntimeError msg)
 
-let execute_pl_code oid code_str args =
+let execute_pl_code oid func_name code_str args =
   let buf = Buffer.create 128 in
   let fmt = formatter_of_buffer buf in
   let func_opt =
     match Hashtbl.find_opt function_cache oid with
     | Some f -> Stdlib.Result.Ok f
-    | None -> compile_function oid code_str buf fmt
+    | None -> compile_function oid func_name code_str buf fmt
   in
   match func_opt with
   | Stdlib.Result.Error e -> e
@@ -68,9 +70,7 @@ let execute_pl_code oid code_str args =
       try
         Ok (f args)
       with e ->
-        Location.report_exception fmt e;
-        Format.pp_print_flush fmt ();
-        RuntimeError ("Exception during execution: " ^ Buffer.contents buf)
+        RuntimeError ("Exception during execution: " ^ Printexc.to_string e)
 
 external postgres_magic_keepalive : unit -> unit = "plocaml_magic_keepalive"
 

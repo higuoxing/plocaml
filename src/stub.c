@@ -74,6 +74,7 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
   HeapTuple procTup;
   Datum prosrc;
   char *user_sql_code;
+  char *func_name;
   int nargs;
   value args_arr, res;
 
@@ -81,6 +82,10 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
   if (!HeapTupleIsValid(procTup)) {
     elog(ERROR, "cache lookup failed for function %u", oid);
   }
+
+  bool name_isnull;
+  Datum proname_datum = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_proname, &name_isnull);
+  func_name = NameStr(*DatumGetName(proname_datum));
 
   prosrc = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_prosrc, &isnull);
   if (isnull) {
@@ -136,9 +141,18 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
              errdetail("Execute function not found.")));
   }
 
-  // plocaml_execute : int -> string -> int array -> execution_result
-  res = caml_callback3(*execute_fn, Val_int(oid), caml_copy_string(user_sql_code), args_arr);
+  value callback_args[] = {Val_int(oid), caml_copy_string(func_name), caml_copy_string(user_sql_code), args_arr};
+  res = caml_callbackN_exn(*execute_fn, 4, callback_args);
   
+  if (Is_exception_result(res)) {
+    res = Extract_exception(res);
+    char *err_msg = strdup(String_val(Field(res, 0))); // simplified exception message
+    ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+             errmsg("PL/OCaml fatal engine exception"),
+             errdetail("%s", err_msg)));
+  }
+
   if (Is_block(res)) {
     int tag = Tag_val(res);
     
@@ -151,9 +165,9 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
         if (!Is_long(datum_val)) {
           ereport(ERROR,
                   (errcode(ERRCODE_DATATYPE_MISMATCH),
-                   errmsg("PL/OCaml procedure did not return Null")));
+                   errmsg("PL/OCaml function with return type \"void\" did not return Null")));
         }
-        fcinfo->isnull = true;
+        fcinfo->isnull = false;
         return (Datum) 0;
       }
 

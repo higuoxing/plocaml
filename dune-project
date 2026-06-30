@@ -1,4 +1,4 @@
-(lang dune 3.23)
+(lang dune 3.20)
 
 (name plocaml)
 
