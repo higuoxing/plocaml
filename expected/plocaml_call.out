@@ -20,7 +20,7 @@ CREATE TABLE test1 (a int);
 CREATE PROCEDURE test_proc3(x int)
 LANGUAGE plocaml
 AS $$
-  let x_val = match args.(0) with PL.Int x -> x | _ -> 0 in
+  let x_val = PL.to_int ~default:0 args.(0) in
   let query = "INSERT INTO test1 VALUES (" ^ string_of_int x_val ^ ")" in
   let _ = PL.execute query in
   PL.Null
@@ -36,7 +36,7 @@ SELECT * FROM test1;
 CREATE PROCEDURE test_proc5(INOUT a text)
 LANGUAGE plocaml
 AS $$
-  let a_str = match args.(0) with PL.String s -> s | _ -> "" in
+  let a_str = PL.to_string ~default:"" args.(0) in
   PL.Array [| PL.String (a_str ^ "+" ^ a_str) |]
 $$;
 CALL test_proc5('abc');
@@ -48,9 +48,9 @@ CALL test_proc5('abc');
 CREATE PROCEDURE test_proc6(a int, INOUT b int, INOUT c int)
 LANGUAGE plocaml
 AS $$
-  let a_val = match args.(0) with PL.Int x -> x | _ -> 0 in
-  let b_val = match args.(1) with PL.Int x -> x | _ -> 0 in
-  let c_val = match args.(2) with PL.Int x -> x | _ -> 0 in
+  let a_val = PL.to_int ~default:0 args.(0) in
+  let b_val = PL.to_int ~default:0 args.(1) in
+  let c_val = PL.to_int ~default:0 args.(2) in
   PL.Array [| PL.Int (b_val * a_val); PL.Int (c_val * a_val) |]
 $$;
 CALL test_proc6(2, 3, 4);
@@ -63,7 +63,7 @@ CALL test_proc6(2, 3, 4);
 CREATE PROCEDURE test_proc9(IN a int, OUT b int)
 LANGUAGE plocaml
 AS $$
-  let a_val = match args.(0) with PL.Int x -> x | _ -> 0 in
+  let a_val = PL.to_int ~default:0 args.(0) in
   PL.notice ("a: " ^ string_of_int a_val);
   PL.Array [| PL.Int (a_val * 2) |]
 $$;

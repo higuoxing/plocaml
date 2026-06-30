@@ -7,7 +7,7 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
-plocaml$(DLSUFFIX): src/runtime.ml src/stub.c
+plocaml$(DLSUFFIX): src/runtime.ml src/stub.c src/bootstrap.ml
 	dune build
 	cp _build/default/src/runtime.bc.so $@
 
