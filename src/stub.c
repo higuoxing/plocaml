@@ -204,7 +204,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
   PG_TRY();
   {
     for (int i = 0; i < nargs; i++) {
-      char *type_name = String_val(Field(argtypes_val, i));
+      const char *type_name = String_val(Field(argtypes_val, i));
       Oid type_id;
       int32 typmod;
       parseTypeString(type_name, &type_id, &typmod, false);
