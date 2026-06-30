@@ -13,10 +13,17 @@ let () = ignore plocaml_spi_execute
 external plocaml_notice : string -> unit = "plocaml_notice"
 let () = ignore plocaml_notice
 
-let init_toplevel bootstrap_code =
+let init_toplevel bootstrap_code guc_stdlib_path =
   Compmisc.init_path ();
   Toploop.initialize_toplevel_env ();
-  Topdirs.dir_directory Plocaml_config.stdlib_path;
+
+  let stdlib_path =
+    if guc_stdlib_path <> "" then guc_stdlib_path
+    else match Sys.getenv_opt "PLOCAML_STDLIB_PATH" with
+    | Some p when p <> "" -> p
+    | _ -> Plocaml_config.stdlib_path
+  in
+  Topdirs.dir_directory stdlib_path;
   let lexbuf = Lexing.from_string bootstrap_code in
   (* Parse and execute all phrases in the bootstrap code sequentially.
      This is required because bootstrap.ml contains multiple top-level

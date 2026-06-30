@@ -13,7 +13,11 @@
 #include <caml/memory.h>
 #include <caml/alloc.h>
 
+#include <utils/guc.h>
+
 PG_MODULE_MAGIC;
+
+static char *plocaml_stdlib_path = NULL;
 
 const char plocaml_bootstrap_code[] = {
 #embed "bootstrap.ml"
@@ -57,13 +61,27 @@ CAMLprim value plocaml_spi_execute(value query_val) {
 }
 
 void _PG_init(void) {
+  DefineCustomStringVariable(
+    "plocaml.stdlib_path",
+    "Path to the OCaml standard library (.cmi files)",
+    "Needed for Toploop to compile OCaml code dynamically.",
+    &plocaml_stdlib_path,
+    "", /* default value */
+    PGC_SUSET,
+    0,
+    NULL, NULL, NULL
+  );
+
   char *caml_argv[] = {"postgres_plocaml", NULL};
   caml_startup(caml_argv);
 
   /* Initialize top level. */
   const value *init_top_level_fn = caml_named_value("plocaml_init_toplevel");
-  if (init_top_level_fn)
-    caml_callback(*init_top_level_fn, caml_copy_string(plocaml_bootstrap_code));
+  if (init_top_level_fn) {
+    value boot_val = caml_copy_string(plocaml_bootstrap_code);
+    value stdlib_val = caml_copy_string(plocaml_stdlib_path ? plocaml_stdlib_path : "");
+    caml_callback2(*init_top_level_fn, boot_val, stdlib_val);
+  }
 }
 
 PG_FUNCTION_INFO_V1(plocaml_call_handler);
