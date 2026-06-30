@@ -7,8 +7,11 @@ type execution_result =
 
 let function_cache : (int, Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.datum) Hashtbl.t = Hashtbl.create 16
 
-external plocaml_spi_execute : string -> int = "plocaml_spi_execute"
+external plocaml_spi_execute : string -> Bootstrap.PLOCaml.spi_result = "plocaml_spi_execute"
 let () = ignore plocaml_spi_execute
+
+external plocaml_spi_execute_with_args : string -> Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.spi_result = "plocaml_spi_execute_with_args"
+let () = ignore plocaml_spi_execute_with_args
 
 external plocaml_elog : int -> string -> unit = "plocaml_elog"
 let () = ignore plocaml_elog

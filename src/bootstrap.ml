@@ -25,6 +25,12 @@ module PLOCaml = struct
   let to_bool ~default = function Bool x -> x | _ -> default
   let to_array ~default = function Array x -> x | _ -> default
 
+  type spi_result = {
+    status : int;
+    nrows : int;
+    rows : (string * datum) list array;
+  }
+
   type log_level =
     | Debug5 | Debug4 | Debug3 | Debug2 | Debug1
     | Log | Info | Notice | Warning | Error
@@ -41,7 +47,8 @@ module PLOCaml = struct
     | Warning -> 19
     | Error -> 21
 
-  external execute : string -> int = "plocaml_spi_execute"
+  external execute : string -> spi_result = "plocaml_spi_execute"
+  external execute_with_args : string -> datum array -> spi_result = "plocaml_spi_execute_with_args"
   external _elog : int -> string -> unit = "plocaml_elog"
   let elog level msg = _elog (log_level_to_int level) msg
   let notice msg = elog Notice msg

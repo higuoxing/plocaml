@@ -9,6 +9,8 @@
 #include <funcapi.h>
 #include <access/htup_details.h>
 #include <commands/extension.h>
+#include <utils/lsyscache.h>
+#include <utils/builtins.h>
 
 #include <caml/mlvalues.h>
 #include <caml/callback.h>
@@ -56,6 +58,171 @@ CAMLprim value plocaml_elog(value level_val, value msg_val) {
   }
 }
 
+static value make_ocaml_datum(Oid type_oid, Datum val, bool isnull) {
+  CAMLparam0();
+  CAMLlocal2(v, s);
+
+  if (isnull) {
+    CAMLreturn(Val_int(0)); // Null variant
+  }
+
+  if (type_oid == INT4OID) {
+    v = caml_alloc(1, DATUM_TAG_INT);
+    Store_field(v, 0, Val_int(DatumGetInt32(val)));
+  } else if (type_oid == INT8OID) {
+    v = caml_alloc(1, DATUM_TAG_INT);
+    Store_field(v, 0, Val_int(DatumGetInt64(val)));
+  } else if (type_oid == INT2OID) {
+    v = caml_alloc(1, DATUM_TAG_INT);
+    Store_field(v, 0, Val_int(DatumGetInt16(val)));
+  } else if (type_oid == FLOAT8OID) {
+    v = caml_alloc(1, DATUM_TAG_FLOAT);
+    value f = caml_copy_double(DatumGetFloat8(val));
+    Store_field(v, 0, f);
+  } else if (type_oid == BOOLOID) {
+    v = caml_alloc(1, DATUM_TAG_BOOL);
+    bool b = DatumGetBool(val);
+    Store_field(v, 0, Val_int(b ? 1 : 0));
+  } else {
+    // Default to string for everything else
+    v = caml_alloc(1, DATUM_TAG_STRING);
+    char *str;
+    Oid typoutput;
+    bool typisvarlena;
+    getTypeOutputInfo(type_oid, &typoutput, &typisvarlena);
+    str = OidOutputFunctionCall(typoutput, val);
+    s = caml_copy_string(str);
+    Store_field(v, 0, s);
+    pfree(str);
+  }
+  CAMLreturn(v);
+}
+
+static value build_spi_result(int status, int nrows) {
+  CAMLparam0();
+  CAMLlocal4(res, rows_arr, row_list, pair);
+  CAMLlocal2(col_name, col_val);
+
+  rows_arr = caml_alloc(nrows, 0);
+
+  if (SPI_tuptable != NULL) {
+    TupleDesc tupdesc = SPI_tuptable->tupdesc;
+    for (int i = 0; i < nrows; i++) {
+      HeapTuple tuple = SPI_tuptable->vals[i];
+      row_list = Val_int(0); // []
+
+      // Build the list backwards so it ends up in the correct order
+      for (int j = tupdesc->natts; j > 0; j--) {
+        bool isnull;
+        Datum val = SPI_getbinval(tuple, tupdesc, j, &isnull);
+        Oid type_oid = SPI_gettypeid(tupdesc, j);
+        char *fname = SPI_fname(tupdesc, j);
+
+        col_name = caml_copy_string(fname);
+        pfree(fname);
+        col_val = make_ocaml_datum(type_oid, val, isnull);
+
+        pair = caml_alloc(2, 0);
+        Store_field(pair, 0, col_name);
+        Store_field(pair, 1, col_val);
+
+        value new_node = caml_alloc(2, 0);
+        Store_field(new_node, 0, pair);
+        Store_field(new_node, 1, row_list);
+        row_list = new_node;
+      }
+      Store_field(rows_arr, i, row_list);
+    }
+  }
+
+  res = caml_alloc(3, 0);
+  Store_field(res, 0, Val_int(status));
+  Store_field(res, 1, Val_int(nrows));
+  Store_field(res, 2, rows_arr);
+
+  CAMLreturn(res);
+}
+
+CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
+  CAMLparam2(query_val, args_val);
+  const char *query = String_val(query_val);
+  
+  if (SPI_connect() != SPI_OK_CONNECT) {
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
+  }
+
+  int res = 0;
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+
+  int nargs = Wosize_val(args_val);
+  Oid *argtypes = palloc(nargs * sizeof(Oid));
+  Datum *Values = palloc(nargs * sizeof(Datum));
+  char *Nulls = palloc(nargs * sizeof(char));
+
+  for (int i = 0; i < nargs; i++) {
+    value elem = Field(args_val, i);
+    if (Is_long(elem)) {
+      argtypes[i] = TEXTOID; // Default to text for nulls
+      Values[i] = (Datum) 0;
+      Nulls[i] = 'n';
+    } else {
+      Nulls[i] = ' ';
+      int e_tag = Tag_val(elem);
+      if (e_tag == DATUM_TAG_INT) {
+        argtypes[i] = INT4OID;
+        Values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_FLOAT) {
+        argtypes[i] = FLOAT8OID;
+        Values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_STRING) {
+        argtypes[i] = TEXTOID;
+        Values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_BOOL) {
+        argtypes[i] = BOOLOID;
+        Values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
+      } else {
+        caml_failwith("PL/OCaml: unsupported argument type for SPI_execute");
+      }
+    }
+  }
+
+  PG_TRY();
+  {
+    res = SPI_execute_with_args(query, nargs, argtypes, Values, Nulls, false, 0);
+    if (res < 0) {
+      failed = true;
+    }
+  }
+  PG_CATCH();
+  {
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  pfree(argtypes);
+  pfree(Values);
+  pfree(Nulls);
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_execute_with_args failed");
+    }
+  }
+  
+  int rows = SPI_processed;
+  value result = build_spi_result(res, rows);
+  SPI_finish();
+  CAMLreturn(result);
+}
+
 CAMLprim value plocaml_spi_execute(value query_val) {
   CAMLparam1(query_val);
   const char *query = String_val(query_val);
@@ -95,8 +262,9 @@ CAMLprim value plocaml_spi_execute(value query_val) {
   }
 
   int rows = SPI_processed;
+  value result = build_spi_result(res, rows);
   SPI_finish();
-  CAMLreturn(Val_int(rows));
+  CAMLreturn(result);
 }
 
 void _PG_init(void) {

@@ -16,3 +16,54 @@ SELECT * FROM test1;
 
 DROP PROCEDURE test_proc3;
 DROP TABLE test1;
+
+--
+-- plan and result objects
+--
+CREATE FUNCTION result_nrows_test(cmd text) RETURNS int
+LANGUAGE plocaml
+AS $$
+  let cmd_str = PL.to_string ~default:"" args.(0) in
+  let rv = PL.execute cmd_str in
+  PL.Int rv.nrows
+$$;
+
+SELECT result_nrows_test($$SELECT 1$$);
+SELECT result_nrows_test($$CREATE TEMPORARY TABLE foo2 (a int, b text)$$);
+SELECT result_nrows_test($$INSERT INTO foo2 VALUES (1, 'one'), (2, 'two')$$);
+SELECT result_nrows_test($$UPDATE foo2 SET b = '' WHERE a = 2$$);
+
+CREATE FUNCTION result_status_test(cmd text) RETURNS int
+LANGUAGE plocaml
+AS $$
+  let cmd_str = PL.to_string ~default:"" args.(0) in
+  let rv = PL.execute cmd_str in
+  PL.Int rv.status
+$$;
+
+SELECT result_status_test($$SELECT 1$$);
+SELECT result_status_test($$CREATE TEMPORARY TABLE foo3 (a int, b text)$$);
+SELECT result_status_test($$INSERT INTO foo3 VALUES (1, 'one'), (2, 'two')$$);
+SELECT result_status_test($$UPDATE foo3 SET b = '' WHERE a = 2$$);
+
+CREATE FUNCTION result_subscript_test() RETURNS void
+LANGUAGE plocaml
+AS $$
+  let rv = PL.execute "SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4" in
+  let get_c row = PL.to_int ~default:0 (List.assoc "c" row) in
+  PL.notice (string_of_int (get_c rv.rows.(1)));
+  PL.notice (string_of_int (get_c rv.rows.(3)));
+  PL.Null
+$$;
+
+SELECT result_subscript_test();
+
+CREATE FUNCTION result_empty_test() RETURNS void
+LANGUAGE plocaml
+AS $$
+  let rv = PL.execute "select 1 where false" in
+  PL.notice (Printf.sprintf "nrows: %d, array length: %d" rv.nrows (Array.length rv.rows));
+  PL.Null
+$$;
+
+SELECT result_empty_test();

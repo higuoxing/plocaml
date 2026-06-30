@@ -1,7 +1,7 @@
 EXTENSION = plocaml
 DATA = plocaml--1.0.sql
 MODULES = plocaml
-REGRESS = plocaml_call plocaml_spi plocaml_void plocaml_do
+REGRESS = plocaml_call plocaml_spi plocaml_void plocaml_do plocaml_spi_nested
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
