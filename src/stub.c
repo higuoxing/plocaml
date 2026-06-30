@@ -3,6 +3,7 @@
 #include <utils/builtins.h>
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
+#include <utils/elog.h>
 #include <utils/syscache.h>
 #include <executor/spi.h>
 #include <funcapi.h>
@@ -12,8 +13,7 @@
 #include <caml/callback.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>
-
-#include <utils/guc.h>
+#include <caml/fail.h>
 
 PG_MODULE_MAGIC;
 
@@ -31,11 +31,32 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value plocaml_notice(value msg_val) {
-  CAMLparam1(msg_val);
+CAMLprim value plocaml_elog(value level_val, value msg_val) {
+  CAMLparam2(level_val, msg_val);
+  int level_tag = Int_val(level_val);
   const char *msg = String_val(msg_val);
-  ereport(NOTICE, (errmsg("%s", msg)));
-  CAMLreturn(Val_unit);
+  int elevel = NOTICE;
+
+  switch (level_tag) {
+    case 0: elevel = DEBUG5; break;
+    case 1: elevel = DEBUG4; break;
+    case 2: elevel = DEBUG3; break;
+    case 3: elevel = DEBUG2; break;
+    case 4: elevel = DEBUG1; break;
+    case 5: elevel = LOG; break;
+    case 6: elevel = INFO; break;
+    case 7: elevel = NOTICE; break;
+    case 8: elevel = WARNING; break;
+    case 9: elevel = ERROR; break;
+    default: elevel = NOTICE; break;
+  }
+
+  if (elevel >= ERROR) {
+    caml_failwith(msg);
+  } else {
+    ereport(elevel, (errmsg("%s", msg)));
+    CAMLreturn(Val_unit);
+  }
 }
 
 CAMLprim value plocaml_spi_execute(value query_val) {
@@ -43,18 +64,39 @@ CAMLprim value plocaml_spi_execute(value query_val) {
   const char *query = String_val(query_val);
   
   if (SPI_connect() != SPI_OK_CONNECT) {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("PL/OCaml: could not connect to SPI manager")));
+    caml_failwith("PL/OCaml: could not connect to SPI manager");
   }
 
-  int res = SPI_execute(query, false, 0);
-  if (res < 0) {
-    SPI_finish();
-    ereport(ERROR,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-             errmsg("PL/OCaml SPI_execute failed"),
-             errdetail("Query: %s", query)));
+  int res = 0;
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+
+  PG_TRY();
+  {
+    res = SPI_execute(query, false, 0);
+    if (res < 0) {
+      failed = true;
+    }
   }
-  
+  PG_CATCH();
+  {
+    edata = CopyErrorData();
+    FlushErrorState();
+    failed = true;
+  }
+  PG_END_TRY();
+
+  if (failed) {
+    SPI_finish();
+    if (edata) {
+      char *msg = pstrdup(edata->message);
+      FreeErrorData(edata);
+      caml_failwith(msg);
+    } else {
+      caml_failwith("PL/OCaml SPI_execute failed");
+    }
+  }
+
   int rows = SPI_processed;
   SPI_finish();
   CAMLreturn(Val_int(rows));

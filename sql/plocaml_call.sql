@@ -71,3 +71,14 @@ DROP PROCEDURE test_proc1;
 DROP PROCEDURE test_proc2;
 DROP PROCEDURE test_proc3;
 DROP TABLE test1;
+
+-- elog tests
+CREATE PROCEDURE test_elog()
+LANGUAGE plocaml
+AS $$
+  PL.elog PL.Warning "This is a warning";
+  PL.elog PL.Info "This is an info";
+  PL.Null
+$$;
+CALL test_elog();
+DROP PROCEDURE test_elog;

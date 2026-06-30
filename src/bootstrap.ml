@@ -25,8 +25,13 @@ module PLOCaml = struct
   let to_bool ~default = function Bool x -> x | _ -> default
   let to_array ~default = function Array x -> x | _ -> default
 
+  type log_level =
+    | Debug5 | Debug4 | Debug3 | Debug2 | Debug1
+    | Log | Info | Notice | Warning | Error
+
   external execute : string -> int = "plocaml_spi_execute"
-  external notice : string -> unit = "plocaml_notice"
+  external elog : log_level -> string -> unit = "plocaml_elog"
+  let notice msg = elog Notice msg
 end;;
 
 module PL = PLOCaml;;
