@@ -12,8 +12,19 @@
 #include <caml/mlvalues.h>
 #include <caml/callback.h>
 #include <caml/memory.h>
+#include <utils/guc.h>
 #include <caml/alloc.h>
 #include <caml/fail.h>
+
+#define DATUM_TAG_INT 0
+#define DATUM_TAG_FLOAT 1
+#define DATUM_TAG_STRING 2
+#define DATUM_TAG_BOOL 3
+#define DATUM_TAG_ARRAY 4
+
+#define RESULT_TAG_OK 0
+#define RESULT_TAG_SYNTAX_ERROR 1
+#define RESULT_TAG_RUNTIME_ERROR 2
 
 PG_MODULE_MAGIC;
 
@@ -33,23 +44,8 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
 
 CAMLprim value plocaml_elog(value level_val, value msg_val) {
   CAMLparam2(level_val, msg_val);
-  int level_tag = Int_val(level_val);
+  int elevel = Int_val(level_val);
   const char *msg = String_val(msg_val);
-  int elevel = NOTICE;
-
-  switch (level_tag) {
-    case 0: elevel = DEBUG5; break;
-    case 1: elevel = DEBUG4; break;
-    case 2: elevel = DEBUG3; break;
-    case 3: elevel = DEBUG2; break;
-    case 4: elevel = DEBUG1; break;
-    case 5: elevel = LOG; break;
-    case 6: elevel = INFO; break;
-    case 7: elevel = NOTICE; break;
-    case 8: elevel = WARNING; break;
-    case 9: elevel = ERROR; break;
-    default: elevel = NOTICE; break;
-  }
 
   if (elevel >= ERROR) {
     caml_failwith(msg);
@@ -170,20 +166,20 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
       Datum arg = PG_GETARG_DATUM(i);
       
       if (type_oid == INT4OID) {
-        v = caml_alloc(1, 0); // Int of int (tag 0)
+        v = caml_alloc(1, DATUM_TAG_INT);
         Store_field(v, 0, Val_int(DatumGetInt32(arg)));
       } else if (type_oid == FLOAT8OID) {
-        v = caml_alloc(1, 1); // Float of float (tag 1)
+        v = caml_alloc(1, DATUM_TAG_FLOAT);
         value f = caml_copy_double(DatumGetFloat8(arg));
         Store_field(v, 0, f);
       } else if (type_oid == TEXTOID || type_oid == VARCHAROID) {
-        v = caml_alloc(1, 2); // String of string (tag 2)
+        v = caml_alloc(1, DATUM_TAG_STRING);
         char *str = TextDatumGetCString(arg);
         value s = caml_copy_string(str);
         Store_field(v, 0, s);
         pfree(str);
       } else if (type_oid == BOOLOID) {
-        v = caml_alloc(1, 3); // Bool of bool (tag 3)
+        v = caml_alloc(1, DATUM_TAG_BOOL);
         bool b = DatumGetBool(arg);
         Store_field(v, 0, Val_int(b ? 1 : 0));
       } else {
@@ -216,7 +212,7 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
   if (Is_block(res)) {
     int tag = Tag_val(res);
     
-    if (tag == 0) {
+    if (tag == RESULT_TAG_OK) {
       // Ok of datum
       value datum_val = Field(res, 0);
       
@@ -239,19 +235,19 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
         int d_tag = Tag_val(datum_val);
         Datum return_datum;
 
-        if (d_tag == 0) { // Int of int
+        if (d_tag == DATUM_TAG_INT) {
           int result = Int_val(Field(datum_val, 0));
           return_datum = Int32GetDatum(result);
-        } else if (d_tag == 1) { // Float of float
+        } else if (d_tag == DATUM_TAG_FLOAT) {
           double result = Double_val(Field(datum_val, 0));
           return_datum = Float8GetDatum(result);
-        } else if (d_tag == 2) { // String of string
+        } else if (d_tag == DATUM_TAG_STRING) {
           const char *result = String_val(Field(datum_val, 0));
           return_datum = CStringGetTextDatum(result);
-        } else if (d_tag == 3) { // Bool of bool
+        } else if (d_tag == DATUM_TAG_BOOL) {
           bool result = (Int_val(Field(datum_val, 0)) != 0);
           return_datum = BoolGetDatum(result);
-        } else if (d_tag == 4) { // Array of datum array
+        } else if (d_tag == DATUM_TAG_ARRAY) {
           TupleDesc tupdesc;
           if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
             ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("function returning record called in context that cannot accept type record")));
@@ -276,13 +272,13 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
              } else {
                  nulls[i] = false;
                  int e_tag = Tag_val(elem);
-                 if (e_tag == 0) {
+                 if (e_tag == DATUM_TAG_INT) {
                      values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
-                 } else if (e_tag == 1) {
+                 } else if (e_tag == DATUM_TAG_FLOAT) {
                      values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
-                 } else if (e_tag == 2) {
+                 } else if (e_tag == DATUM_TAG_STRING) {
                      values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
-                 } else if (e_tag == 3) {
+                 } else if (e_tag == DATUM_TAG_BOOL) {
                      values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
                  } else {
                      elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag in array element.");
@@ -299,20 +295,22 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
         
         return return_datum;
       }
-    } else if (tag == 1) {
+    } else if (tag == RESULT_TAG_SYNTAX_ERROR) {
       // SyntaxError of string
       const char *err_msg = String_val(Field(res, 0));
       ereport(ERROR,
               (errcode(ERRCODE_SYNTAX_ERROR),
                errmsg("PL/OCaml syntax error"),
                errdetail("%s", err_msg)));
-    } else {
+    } else if (tag == RESULT_TAG_RUNTIME_ERROR) {
       // RuntimeError of string
       const char *err_msg = String_val(Field(res, 0));
       ereport(ERROR,
               (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                errmsg("PL/OCaml execution failed"),
                errdetail("%s", err_msg)));
+    } else {
+      elog(ERROR, "PL/OCaml engine error: Unexpected return variant tag from OCaml.");
     }
   }
 

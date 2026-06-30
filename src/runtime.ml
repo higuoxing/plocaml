@@ -10,7 +10,7 @@ let function_cache : (int, Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.da
 external plocaml_spi_execute : string -> int = "plocaml_spi_execute"
 let () = ignore plocaml_spi_execute
 
-external plocaml_elog : Bootstrap.PLOCaml.log_level -> string -> unit = "plocaml_elog"
+external plocaml_elog : int -> string -> unit = "plocaml_elog"
 let () = ignore plocaml_elog
 
 let init_toplevel bootstrap_code guc_stdlib_path =

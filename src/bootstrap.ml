@@ -29,8 +29,21 @@ module PLOCaml = struct
     | Debug5 | Debug4 | Debug3 | Debug2 | Debug1
     | Log | Info | Notice | Warning | Error
 
+  let log_level_to_int = function
+    | Debug5 -> 10
+    | Debug4 -> 11
+    | Debug3 -> 12
+    | Debug2 -> 13
+    | Debug1 -> 14
+    | Log -> 15
+    | Info -> 17
+    | Notice -> 18
+    | Warning -> 19
+    | Error -> 21
+
   external execute : string -> int = "plocaml_spi_execute"
-  external elog : log_level -> string -> unit = "plocaml_elog"
+  external _elog : int -> string -> unit = "plocaml_elog"
+  let elog level msg = _elog (log_level_to_int level) msg
   let notice msg = elog Notice msg
 end;;
 
