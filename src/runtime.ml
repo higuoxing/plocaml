@@ -31,8 +31,8 @@ let () = ignore plocaml_spi_fetch
 external plocaml_spi_close : Bootstrap.PLOCaml.cursor -> unit = "plocaml_spi_close"
 let () = ignore plocaml_spi_close
 
-external plocaml_elog : int -> string -> unit = "plocaml_elog"
-let () = ignore plocaml_elog
+external plocaml_report : int -> Bootstrap.PLOCaml.error_info -> unit = "plocaml_report"
+let () = ignore plocaml_report
 
 let init_toplevel bootstrap_code guc_stdlib_path =
   Compmisc.init_path ();

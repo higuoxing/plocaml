@@ -13,6 +13,7 @@
 #include <utils/builtins.h>
 #include <utils/elog.h>
 #include <utils/lsyscache.h>
+#include <utils/memutils.h>
 #include <utils/syscache.h>
 #include <utils/tuplestore.h>
 
@@ -30,6 +31,17 @@ PG_MODULE_MAGIC;
 
 static char *plocaml_stdlib_path = NULL;
 
+/*
+ * When a PL.error/PL.report at ERROR level fires, plocaml_report captures the
+ * full ErrorData here and unwinds through OCaml via caml_failwith. The call
+ * boundary (plocaml_handle_error) re-throws it so all error fields (detail,
+ * hint, sqlstate, schema/table/column/datatype/constraint) survive to the
+ * final ereport. The copy lives in plocaml_error_cxt so it outlives SPI/exec
+ * memory contexts torn down during unwinding.
+ */
+static MemoryContext plocaml_error_cxt = NULL;
+static ErrorData *plocaml_pending_edata = NULL;
+
 const char plocaml_bootstrap_code[] = {
 #embed "bootstrap.ml"
     , '\0'};
@@ -41,17 +53,77 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value plocaml_elog(value level_val, value msg_val) {
-  CAMLparam2(level_val, msg_val);
-  int elevel = Int_val(level_val);
-  const char *msg = String_val(msg_val);
+/* Read a [string option] record field: None -> NULL, Some s -> s. */
+#define OPT_STR(info, i)                                                       \
+  (Is_block(Field((info), (i))) ? String_val(Field(Field((info), (i)), 0))     \
+                                : NULL)
 
-  if (elevel >= ERROR) {
-    caml_failwith(msg);
-  } else {
-    ereport(elevel, (errmsg("%s", msg)));
-    CAMLreturn(Val_unit);
+CAMLprim value plocaml_report(value level_val, value info) {
+  CAMLparam2(level_val, info);
+  int elevel = Int_val(level_val);
+
+  const char *message = String_val(Field(info, 0));
+  const char *detail = OPT_STR(info, 1);
+  const char *hint = OPT_STR(info, 2);
+  const char *sqlstate_str = OPT_STR(info, 3);
+  const char *schema_name = OPT_STR(info, 4);
+  const char *table_name = OPT_STR(info, 5);
+  const char *column_name = OPT_STR(info, 6);
+  const char *datatype_name = OPT_STR(info, 7);
+  const char *constraint_name = OPT_STR(info, 8);
+
+  MemoryContext caller_context = CurrentMemoryContext;
+  volatile bool failed = false;
+  ErrorData *edata = NULL;
+
+  PG_TRY();
+  {
+    int sqlstate = 0;
+    if (sqlstate_str != NULL) {
+      if (strlen(sqlstate_str) != 5 ||
+          strspn(sqlstate_str, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != 5)
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("invalid SQLSTATE code")));
+      sqlstate = MAKE_SQLSTATE(sqlstate_str[0], sqlstate_str[1], sqlstate_str[2],
+                               sqlstate_str[3], sqlstate_str[4]);
+    }
+
+    ereport(elevel,
+            ((sqlstate != 0) ? errcode(sqlstate) : 0,
+             errmsg_internal("%s", message),
+             (detail) ? errdetail_internal("%s", detail) : 0,
+             (hint) ? errhint("%s", hint) : 0,
+             (column_name) ? err_generic_string(PG_DIAG_COLUMN_NAME, column_name)
+                           : 0,
+             (constraint_name)
+                 ? err_generic_string(PG_DIAG_CONSTRAINT_NAME, constraint_name)
+                 : 0,
+             (datatype_name)
+                 ? err_generic_string(PG_DIAG_DATATYPE_NAME, datatype_name)
+                 : 0,
+             (table_name) ? err_generic_string(PG_DIAG_TABLE_NAME, table_name)
+                          : 0,
+             (schema_name) ? err_generic_string(PG_DIAG_SCHEMA_NAME, schema_name)
+                           : 0));
+    /* elevel < ERROR returns here; ERROR longjmps to PG_CATCH. */
   }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(plocaml_error_cxt);
+    edata = CopyErrorData();
+    FlushErrorState();
+    MemoryContextSwitchTo(caller_context);
+    failed = true;
+  }
+  PG_END_TRY();
+
+  if (failed) {
+    /* Stash for re-throw at the call boundary, then unwind through OCaml. */
+    plocaml_pending_edata = edata;
+    caml_failwith(edata->message ? edata->message : "PL/OCaml error");
+  }
+
+  CAMLreturn(Val_unit);
 }
 
 value make_ocaml_datum(Oid type_oid, Datum val, bool isnull) {
@@ -101,6 +173,9 @@ void _PG_init(void) {
       &plocaml_stdlib_path, "", /* default value */
       PGC_SUSET, 0, NULL, NULL, NULL);
 
+  plocaml_error_cxt = AllocSetContextCreate(TopMemoryContext, "PL/OCaml error",
+                                            ALLOCSET_SMALL_SIZES);
+
   char *caml_argv[] = {"postgres_plocaml", NULL};
   caml_startup(caml_argv);
 
@@ -116,6 +191,14 @@ void _PG_init(void) {
 
 static void plocaml_handle_error(value res);
 
+/* Drop any error state left over from a prior top-level call (e.g. a PL.error
+   whose OCaml exception was caught and swallowed by user code). */
+static void plocaml_reset_error_state(void) {
+  plocaml_pending_edata = NULL;
+  if (plocaml_error_cxt != NULL)
+    MemoryContextReset(plocaml_error_cxt);
+}
+
 PG_FUNCTION_INFO_V1(plocamlu_inline_handler);
 Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
   InlineCodeBlock *codeblock =
@@ -124,6 +207,8 @@ Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
   char *func_name = "inline_code_block";
   int oid = 0;
   value args_arr, res;
+
+  plocaml_reset_error_state();
 
   args_arr = caml_alloc(0, 0); // Empty array
 
@@ -308,6 +393,14 @@ static Datum plocaml_handle_setof(FunctionCallInfo fcinfo, value datum_val) {
 }
 
 static void plocaml_handle_error(value res) {
+  /* A PL.error/PL.report(Error) captured a full ErrorData; re-throw it so all
+     error fields survive to the final ereport (and GET STACKED DIAGNOSTICS). */
+  if (plocaml_pending_edata != NULL) {
+    ErrorData *edata = plocaml_pending_edata;
+    plocaml_pending_edata = NULL;
+    ReThrowError(edata);
+  }
+
   if (Is_exception_result(res)) {
     res = Extract_exception(res);
     char *err_msg =
@@ -345,6 +438,8 @@ Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
   char *user_sql_code;
   char *func_name;
   value args_arr, res;
+
+  plocaml_reset_error_state();
 
   procTup = SearchSysCache1(PROCOID, ObjectIdGetDatum(oid));
   if (!HeapTupleIsValid(procTup)) {

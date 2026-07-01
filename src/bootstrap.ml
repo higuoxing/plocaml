@@ -94,9 +94,45 @@ module PLOCaml = struct
   external cursor_plan : plan -> datum array -> cursor = "plocaml_spi_cursor_plan"
   external fetch : cursor -> int -> spi_result = "plocaml_spi_fetch"
   external close : cursor -> unit = "plocaml_spi_close"
-  external _elog : int -> string -> unit = "plocaml_elog"
-  let elog level msg = _elog (log_level_to_int level) msg
-  let notice msg = elog Notice msg
+
+  (* Structured error/notice report, mirroring PL/Python's plpy.error and
+     friends. The optional fields map to the PostgreSQL error fields. For a
+     level of [Error] (or higher) the report raises; lower levels emit a
+     message and return. *)
+  type error_info = {
+    e_message : string;
+    e_detail : string option;
+    e_hint : string option;
+    e_sqlstate : string option;
+    e_schema_name : string option;
+    e_table_name : string option;
+    e_column_name : string option;
+    e_datatype_name : string option;
+    e_constraint_name : string option;
+  }
+
+  external _report : int -> error_info -> unit = "plocaml_report"
+
+  (* [level] comes first so the plpy-style helpers below are just partial
+     applications: fixing the level stops before the optional fields, leaving
+     them intact for the caller. *)
+  let report level ?detail ?hint ?sqlstate ?schema_name ?table_name ?column_name
+             ?datatype_name ?constraint_name message =
+    _report (log_level_to_int level)
+      { e_message = message; e_detail = detail; e_hint = hint;
+        e_sqlstate = sqlstate; e_schema_name = schema_name;
+        e_table_name = table_name; e_column_name = column_name;
+        e_datatype_name = datatype_name; e_constraint_name = constraint_name }
+
+  let debug   = report Debug1
+  let log     = report Log
+  let info    = report Info
+  let notice  = report Notice
+  let warning = report Warning
+  let error   = report Error
+
+  (* Backward-compatible plain message log. *)
+  let elog level message = report level message
 end;;
 
 module PL = PLOCaml;;
