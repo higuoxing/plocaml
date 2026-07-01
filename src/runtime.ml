@@ -60,13 +60,14 @@ let init_toplevel bootstrap_code guc_stdlib_path =
   | End_of_file -> ()
 
 let compile_function oid func_name code_str buf fmt =
-  let wrapper = 
+  let wrapper =
     if oid = 0 then
       (* For DO blocks (oid = 0), we don't expect a return value, just unit.
-         We wrap it to return PL.Null so the rest of the engine works normally. *)
-      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;\nPL.Null;;" oid func_name code_str
+         We wrap it to return PL.Null so the rest of the engine works normally.
+         All DO blocks share the OID-0 SD table. *)
+      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\nlet gd = PL.gd in let sd = PL.get_sd %d in ignore gd; ignore sd;\n# 1 \"[PL/OCaml function %s]\"\n%s;\nPL.Null;;" oid oid func_name code_str
     else
-      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n# 1 \"[PL/OCaml function %s]\"\n%s;;" oid func_name code_str
+      Printf.sprintf "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\nlet gd = PL.gd in let sd = PL.get_sd %d in ignore gd; ignore sd;\n# 1 \"[PL/OCaml function %s]\"\n%s;;" oid oid func_name code_str
   in
   let lexbuf = Lexing.from_string wrapper in
   try

@@ -1,4 +1,8 @@
 module PLOCaml = struct
+  (* Abstract handles backed by C custom blocks (see plocaml_spi.c). *)
+  type plan
+  type cursor
+
   type datum =
     | Null
     | Int of int
@@ -25,6 +29,39 @@ module PLOCaml = struct
   let to_bool ~default = function Bool x -> x | _ -> default
   let to_array ~default = function Array x -> x | _ -> default
 
+  (* A [store] holds values of ANY type, mirroring the free-form nature of
+     PL/Python's GD/SD dictionaries. Because OCaml is statically typed this is
+     achieved with an unchecked cast ([Obj.repr]/[Obj.obj]): the type you read
+     a key back at MUST match the type it was written with, otherwise behaviour
+     is undefined. Always use [set]/[get]/[get_opt] rather than touching the
+     underlying [Obj.t] directly. Structural operations that don't inspect the
+     value (Hashtbl.mem, .remove, .clear, .length, ...) can be used as-is. *)
+  type store = (string, Obj.t) Hashtbl.t
+
+  let set (t : store) (key : string) (v : 'a) : unit = Hashtbl.replace t key (Obj.repr v)
+
+  let get_opt (t : store) (key : string) : 'a option =
+    match Hashtbl.find_opt t key with Some v -> Some (Obj.obj v) | None -> None
+
+  let get (t : store) (key : string) : 'a =
+    match Hashtbl.find_opt t key with
+    | Some v -> Obj.obj v
+    | None -> failwith (Printf.sprintf "PL/OCaml: no GD/SD entry for key %S" key)
+
+  (* GD: one global store shared by all functions in the session. Its lifetime
+     is the backend session, mirroring PL/Python's GD. *)
+  let gd : store = Hashtbl.create 16
+
+  (* SD: one store per function OID, persisting across calls to the same
+     function within the session, mirroring PL/Python's SD. The OID is baked
+     into each compiled function (see runtime.ml), so [get_sd] returns the
+     store belonging to the currently executing function. *)
+  let _sd_registry : (int, store) Hashtbl.t = Hashtbl.create 16
+  let get_sd (oid : int) : store =
+    match Hashtbl.find_opt _sd_registry oid with
+    | Some t -> t
+    | None -> let t = Hashtbl.create 16 in Hashtbl.add _sd_registry oid t; t
+
   type spi_result = {
     status : int;
     nrows : int;
@@ -48,13 +85,10 @@ module PLOCaml = struct
     | Error -> 21
 
   external execute : string -> spi_result = "plocaml_spi_execute"
-  type plan
 
   external prepare : string -> string array -> plan = "plocaml_spi_prepare"
   external execute_with_args : string -> datum array -> spi_result = "plocaml_spi_execute_with_args"
   external execute_plan : plan -> datum array -> spi_result = "plocaml_spi_execute_plan"
-
-  type cursor
 
   external cursor : string -> cursor = "plocaml_spi_cursor"
   external cursor_plan : plan -> datum array -> cursor = "plocaml_spi_cursor_plan"
