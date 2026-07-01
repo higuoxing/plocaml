@@ -41,7 +41,25 @@ let init_toplevel bootstrap_code guc_stdlib_path =
   with
   | End_of_file -> ()
 
+(* Universal newline support: OCaml's lexer accepts LF and CRLF but rejects a
+   bare CR, so normalize CR and CRLF in the user source to LF before compiling.
+   Only literal CR bytes are affected, not "\r" escape sequences. *)
+let normalize_newlines s =
+  let b = Buffer.create (String.length s) in
+  let n = String.length s in
+  let i = ref 0 in
+  while !i < n do
+    (match s.[!i] with
+     | '\r' ->
+         Buffer.add_char b '\n';
+         if !i + 1 < n && s.[!i + 1] = '\n' then incr i
+     | c -> Buffer.add_char b c);
+    incr i
+  done;
+  Buffer.contents b
+
 let compile_function oid func_name code_str buf fmt =
+  let code_str = normalize_newlines code_str in
   let wrapper =
     if oid = 0 then
       (* For DO blocks (oid = 0), we don't expect a return value, just unit.
