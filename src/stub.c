@@ -14,6 +14,7 @@
 #include <utils/elog.h>
 #include <utils/lsyscache.h>
 #include <utils/syscache.h>
+#include <utils/tuplestore.h>
 
 #include <caml/alloc.h>
 #include <caml/callback.h>
@@ -173,40 +174,9 @@ Datum plocaml_inline_handler(PG_FUNCTION_ARGS) {
   pg_unreachable();
 }
 
-Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
-  int oid = fcinfo->flinfo->fn_oid;
-  bool isnull;
-  HeapTuple procTup;
-  Datum prosrc;
-  char *user_sql_code;
-  char *func_name;
-  int nargs;
-  value args_arr, res;
-
-  procTup = SearchSysCache1(PROCOID, ObjectIdGetDatum(oid));
-  if (!HeapTupleIsValid(procTup)) {
-    elog(ERROR, "cache lookup failed for function %u", oid);
-  }
-
-  bool name_isnull;
-  Datum proname_datum =
-      SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_proname, &name_isnull);
-  func_name = NameStr(*DatumGetName(proname_datum));
-
-  prosrc = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_prosrc, &isnull);
-  if (isnull) {
-    ReleaseSysCache(procTup);
-    elog(ERROR, "null prosrc for function %u", oid);
-  }
-
-  user_sql_code = TextDatumGetCString(prosrc);
-  ReleaseSysCache(procTup);
-  prosrc = (Datum)0;
-
-  // Remove all notices
-  // Convert Postgres arguments to OCaml arguments array
-  nargs = PG_NARGS();
-  args_arr = caml_alloc(nargs, 0); // 0 tag for Tuple/Array
+static value plocaml_build_args(FunctionCallInfo fcinfo) {
+  int nargs = PG_NARGS();
+  value args_arr = caml_alloc(nargs, 0); // 0 tag for Tuple/Array
   for (int i = 0; i < nargs; i++) {
     value v;
     if (PG_ARGISNULL(i)) {
@@ -238,6 +208,193 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
     }
     Store_field(args_arr, i, v);
   }
+  return args_arr;
+}
+
+static HeapTuple plocaml_build_heap_tuple(value arr, TupleDesc tupdesc) {
+  int arr_len = Wosize_val(arr);
+  if (arr_len != tupdesc->natts) {
+    ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                    errmsg("length of returned sequence did not match number "
+                           "of columns in row")));
+  }
+
+  Datum *values = palloc(tupdesc->natts * sizeof(Datum));
+  bool *nulls = palloc(tupdesc->natts * sizeof(bool));
+
+  for (int i = 0; i < tupdesc->natts; i++) {
+    value elem = Field(arr, i);
+    if (Is_long(elem)) {
+      nulls[i] = true;
+      values[i] = (Datum)0;
+    } else {
+      nulls[i] = false;
+      int e_tag = Tag_val(elem);
+      if (e_tag == DATUM_TAG_INT) {
+        values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_FLOAT) {
+        values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_STRING) {
+        values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
+      } else if (e_tag == DATUM_TAG_BOOL) {
+        values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
+      } else {
+        elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag in "
+                    "array element.");
+      }
+    }
+  }
+
+  HeapTuple tuple = heap_form_tuple(tupdesc, values, nulls);
+  pfree(values);
+  pfree(nulls);
+  return tuple;
+}
+
+static Datum plocaml_convert_datum(FunctionCallInfo fcinfo, value datum_val,
+                                   bool *isnull) {
+  if (Is_long(datum_val)) {
+    *isnull = true;
+    return (Datum)0;
+  }
+
+  *isnull = false;
+  int d_tag = Tag_val(datum_val);
+
+  if (d_tag == DATUM_TAG_INT) {
+    return Int32GetDatum(Int_val(Field(datum_val, 0)));
+  } else if (d_tag == DATUM_TAG_FLOAT) {
+    return Float8GetDatum(Double_val(Field(datum_val, 0)));
+  } else if (d_tag == DATUM_TAG_STRING) {
+    return CStringGetTextDatum(String_val(Field(datum_val, 0)));
+  } else if (d_tag == DATUM_TAG_BOOL) {
+    return BoolGetDatum(Int_val(Field(datum_val, 0)) != 0);
+  } else if (d_tag == DATUM_TAG_ARRAY) {
+    TupleDesc tupdesc;
+    if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("function returning record called in context that "
+                             "cannot accept type record")));
+    }
+    BlessTupleDesc(tupdesc);
+    HeapTuple tuple = plocaml_build_heap_tuple(Field(datum_val, 0), tupdesc);
+    Datum return_datum = heap_copy_tuple_as_datum(tuple, tupdesc);
+    heap_freetuple(tuple);
+    return return_datum;
+  } else {
+    elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag.");
+  }
+  return (Datum)0;
+}
+
+static Datum plocaml_handle_setof(FunctionCallInfo fcinfo, value datum_val) {
+  ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+  if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo) ||
+      (rsinfo->allowedModes & SFRM_Materialize) == 0)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("set-valued function called in context that cannot "
+                           "accept a set")));
+
+  InitMaterializedSRF(fcinfo, 0);
+
+  if (Is_long(datum_val)) {
+    return (Datum)0; // empty set
+  }
+
+  if (Tag_val(datum_val) != DATUM_TAG_ARRAY) {
+    ereport(ERROR,
+            (errcode(ERRCODE_DATATYPE_MISMATCH),
+             errmsg("SETOF returning functions must return a PL.Array")));
+  }
+
+  value rows_arr = Field(datum_val, 0);
+  int num_rows = Wosize_val(rows_arr);
+  TupleDesc tupdesc = rsinfo->setDesc;
+  BlessTupleDesc(tupdesc);
+
+  bool is_composite =
+      (tupdesc->natts > 1 ||
+       get_call_result_type(fcinfo, NULL, NULL) == TYPEFUNC_COMPOSITE);
+
+  for (int r = 0; r < num_rows; r++) {
+    value row_val = Field(rows_arr, r);
+
+    if (is_composite) {
+      if (Is_long(row_val) || Tag_val(row_val) != DATUM_TAG_ARRAY) {
+        ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                        errmsg("SETOF record must return an array of arrays")));
+      }
+      HeapTuple tuple = plocaml_build_heap_tuple(Field(row_val, 0), tupdesc);
+      tuplestore_puttuple(rsinfo->setResult, tuple);
+      heap_freetuple(tuple);
+    } else {
+      bool is_null;
+      Datum value_datum = plocaml_convert_datum(fcinfo, row_val, &is_null);
+      tuplestore_putvalues(rsinfo->setResult, tupdesc, &value_datum, &is_null);
+    }
+  }
+  return (Datum)0;
+}
+
+static void plocaml_handle_error(value res) {
+  if (Is_exception_result(res)) {
+    res = Extract_exception(res);
+    char *err_msg =
+        strdup(String_val(Field(res, 0))); // simplified exception message
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("PL/OCaml fatal engine exception"),
+                    errdetail("%s", err_msg)));
+  }
+
+  if (Is_block(res)) {
+    int tag = Tag_val(res);
+    if (tag == RESULT_TAG_SYNTAX_ERROR) {
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_SYNTAX_ERROR), errmsg("PL/OCaml syntax error"),
+               errdetail("%s", err_msg)));
+    } else if (tag == RESULT_TAG_RUNTIME_ERROR) {
+      const char *err_msg = String_val(Field(res, 0));
+      ereport(ERROR,
+              (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+               errmsg("PL/OCaml execution failed"), errdetail("%s", err_msg)));
+    }
+  }
+
+  elog(ERROR, "PL/OCaml engine error: Unexpected return variant from OCaml.");
+  pg_unreachable();
+}
+
+Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
+  int oid = fcinfo->flinfo->fn_oid;
+  bool isnull;
+  HeapTuple procTup;
+  Datum prosrc;
+  char *user_sql_code;
+  char *func_name;
+  value args_arr, res;
+
+  procTup = SearchSysCache1(PROCOID, ObjectIdGetDatum(oid));
+  if (!HeapTupleIsValid(procTup)) {
+    elog(ERROR, "cache lookup failed for function %u", oid);
+  }
+
+  bool name_isnull;
+  Datum proname_datum =
+      SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_proname, &name_isnull);
+  func_name = NameStr(*DatumGetName(proname_datum));
+
+  prosrc = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_prosrc, &isnull);
+  if (isnull) {
+    ReleaseSysCache(procTup);
+    elog(ERROR, "null prosrc for function %u", oid);
+  }
+
+  user_sql_code = TextDatumGetCString(prosrc);
+  ReleaseSysCache(procTup);
+  prosrc = (Datum)0;
+
+  args_arr = plocaml_build_args(fcinfo);
 
   const value *execute_fn = caml_named_value("plocaml_execute");
   if (!execute_fn) {
@@ -250,126 +407,30 @@ Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
                            caml_copy_string(user_sql_code), args_arr};
   res = caml_callbackN_exn(*execute_fn, 4, callback_args);
 
-  if (Is_exception_result(res)) {
-    res = Extract_exception(res);
-    char *err_msg =
-        strdup(String_val(Field(res, 0))); // simplified exception message
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("PL/OCaml fatal engine exception"),
-                    errdetail("%s", err_msg)));
+  if (Is_exception_result(res) ||
+      (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
+    plocaml_handle_error(res);
   }
 
-  if (Is_block(res)) {
-    int tag = Tag_val(res);
+  value datum_val = Field(res, 0);
 
-    if (tag == RESULT_TAG_OK) {
-      // Ok of datum
-      value datum_val = Field(res, 0);
-
-      // If it's a procedure (void return type), enforce returning Null
-      if (get_fn_expr_rettype(fcinfo->flinfo) == VOIDOID) {
-        if (!Is_long(datum_val)) {
-          ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
-                          errmsg("PL/OCaml function with return type \"void\" "
-                                 "did not return Null")));
-        }
-        fcinfo->isnull = false;
-        return (Datum)0;
-      }
-
-      if (Is_long(datum_val)) {
-        // Null
-        fcinfo->isnull = true;
-        return (Datum)0;
-      } else {
-        int d_tag = Tag_val(datum_val);
-        Datum return_datum;
-
-        if (d_tag == DATUM_TAG_INT) {
-          int result = Int_val(Field(datum_val, 0));
-          return_datum = Int32GetDatum(result);
-        } else if (d_tag == DATUM_TAG_FLOAT) {
-          double result = Double_val(Field(datum_val, 0));
-          return_datum = Float8GetDatum(result);
-        } else if (d_tag == DATUM_TAG_STRING) {
-          const char *result = String_val(Field(datum_val, 0));
-          return_datum = CStringGetTextDatum(result);
-        } else if (d_tag == DATUM_TAG_BOOL) {
-          bool result = (Int_val(Field(datum_val, 0)) != 0);
-          return_datum = BoolGetDatum(result);
-        } else if (d_tag == DATUM_TAG_ARRAY) {
-          TupleDesc tupdesc;
-          if (get_call_result_type(fcinfo, NULL, &tupdesc) !=
-              TYPEFUNC_COMPOSITE) {
-            ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                            errmsg("function returning record called in "
-                                   "context that cannot accept type record")));
-          }
-
-          BlessTupleDesc(tupdesc);
-
-          value arr = Field(datum_val, 0);
-          int arr_len = Wosize_val(arr);
-          if (arr_len != tupdesc->natts) {
-            ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
-                            errmsg("PL/OCaml array length %d does not match "
-                                   "expected record length %d",
-                                   arr_len, tupdesc->natts)));
-          }
-
-          Datum *values = palloc(tupdesc->natts * sizeof(Datum));
-          bool *nulls = palloc(tupdesc->natts * sizeof(bool));
-
-          for (int i = 0; i < tupdesc->natts; i++) {
-            value elem = Field(arr, i);
-            if (Is_long(elem)) {
-              nulls[i] = true;
-              values[i] = (Datum)0;
-            } else {
-              nulls[i] = false;
-              int e_tag = Tag_val(elem);
-              if (e_tag == DATUM_TAG_INT) {
-                values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
-              } else if (e_tag == DATUM_TAG_FLOAT) {
-                values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
-              } else if (e_tag == DATUM_TAG_STRING) {
-                values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
-              } else if (e_tag == DATUM_TAG_BOOL) {
-                values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
-              } else {
-                elog(ERROR, "PL/OCaml engine error: Unexpected datum variant "
-                            "tag in array element.");
-              }
-            }
-          }
-
-          HeapTuple tuple = heap_form_tuple(tupdesc, values, nulls);
-          return_datum = heap_copy_tuple_as_datum(tuple, tupdesc);
-          heap_freetuple(tuple);
-        } else {
-          elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag.");
-        }
-
-        return return_datum;
-      }
-    } else if (tag == RESULT_TAG_SYNTAX_ERROR) {
-      // SyntaxError of string
-      const char *err_msg = String_val(Field(res, 0));
-      ereport(ERROR,
-              (errcode(ERRCODE_SYNTAX_ERROR), errmsg("PL/OCaml syntax error"),
-               errdetail("%s", err_msg)));
-    } else if (tag == RESULT_TAG_RUNTIME_ERROR) {
-      // RuntimeError of string
-      const char *err_msg = String_val(Field(res, 0));
-      ereport(ERROR,
-              (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-               errmsg("PL/OCaml execution failed"), errdetail("%s", err_msg)));
-    } else {
-      elog(ERROR,
-           "PL/OCaml engine error: Unexpected return variant tag from OCaml.");
+  // If it's a procedure (void return type), enforce returning Null
+  if (get_fn_expr_rettype(fcinfo->flinfo) == VOIDOID) {
+    if (!Is_long(datum_val)) {
+      ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                      errmsg("PL/OCaml function with return type \"void\" "
+                             "did not return Null")));
     }
+    fcinfo->isnull = false;
+    return (Datum)0;
   }
 
-  elog(ERROR, "PL/OCaml engine error: Unexpected return variant from OCaml.");
-  pg_unreachable();
+  if (fcinfo->flinfo->fn_retset) {
+    return plocaml_handle_setof(fcinfo, datum_val);
+  }
+
+  bool ret_isnull;
+  Datum return_datum = plocaml_convert_datum(fcinfo, datum_val, &ret_isnull);
+  fcinfo->isnull = ret_isnull;
+  return return_datum;
 }
