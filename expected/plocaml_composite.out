@@ -1,0 +1,133 @@
+CREATE TYPE type_record AS (
+	first text,
+	second integer
+);
+CREATE TYPE table_record AS (
+	first text,
+	second integer,
+	retnull boolean
+);
+CREATE FUNCTION multiout_simple(OUT i integer, OUT j integer) AS $$
+  PL.Array [| PL.Int 1; PL.Int 2 |]
+$$ LANGUAGE plocaml;
+SELECT multiout_simple();
+ multiout_simple 
+-----------------
+ (1,2)
+(1 row)
+
+SELECT * FROM multiout_simple();
+ i | j 
+---+---
+ 1 | 2
+(1 row)
+
+SELECT i, j + 2 FROM multiout_simple();
+ i | ?column? 
+---+----------
+ 1 |        4
+(1 row)
+
+SELECT (multiout_simple()).j + 3;
+ ?column? 
+----------
+        5
+(1 row)
+
+CREATE FUNCTION multiout_simple_setof(n integer DEFAULT 1, OUT integer, OUT integer) RETURNS SETOF record AS $$
+  let n_val = PL.to_int ~default:1 args.(0) in
+  let arr = Array.make n_val (PL.Array [| PL.Int 1; PL.Int 2 |]) in
+  PL.Array arr
+$$ LANGUAGE plocaml;
+SELECT multiout_simple_setof();
+ multiout_simple_setof 
+-----------------------
+ (1,2)
+(1 row)
+
+SELECT * FROM multiout_simple_setof();
+ column1 | column2 
+---------+---------
+       1 |       2
+(1 row)
+
+SELECT * FROM multiout_simple_setof(3);
+ column1 | column2 
+---------+---------
+       1 |       2
+       1 |       2
+       1 |       2
+(3 rows)
+
+CREATE FUNCTION multiout_return_table() RETURNS TABLE (x integer, y text) AS $$
+  PL.Array [|
+    PL.Array [| PL.Int 4; PL.String "four" |];
+    PL.Array [| PL.Int 7; PL.String "seven" |];
+    PL.Array [| PL.Int 0; PL.String "zero" |]
+  |]
+$$ LANGUAGE plocaml;
+SELECT * FROM multiout_return_table();
+ x |   y   
+---+-------
+ 4 | four
+ 7 | seven
+ 0 | zero
+(3 rows)
+
+CREATE FUNCTION return_record(t text) RETURNS record AS $$
+  let t = args.(0) in
+  PL.Array [| t; PL.Int 10 |]
+$$ LANGUAGE plocaml;
+SELECT * FROM return_record('abc') AS r(t text, val integer);
+  t  | val 
+-----+-----
+ abc |  10
+(1 row)
+
+SELECT * FROM return_record('abc') AS r(t text, val bigint);
+  t  | val 
+-----+-----
+ abc |  10
+(1 row)
+
+SELECT * FROM return_record('abc') AS r(t text, val integer);
+  t  | val 
+-----+-----
+ abc |  10
+(1 row)
+
+SELECT * FROM return_record('abc') AS r(t varchar(30), val integer);
+  t  | val 
+-----+-----
+ abc |  10
+(1 row)
+
+SELECT * FROM return_record('abc') AS r(t varchar(100), val integer);
+  t  | val 
+-----+-----
+ abc |  10
+(1 row)
+
+SELECT * FROM return_record('999') AS r(val text, t integer);
+ val | t  
+-----+----
+ 999 | 10
+(1 row)
+
+CREATE FUNCTION return_record_2(t text) RETURNS record AS $$
+  let t = args.(0) in
+  PL.Array [| PL.Int 1; PL.Int 2; t |]
+$$ LANGUAGE plocaml;
+SELECT * FROM return_record_2('v3') AS (v1 int, v2 int, v3 text);
+ v1 | v2 | v3 
+----+----+----
+  1 |  2 | v3
+(1 row)
+
+DROP FUNCTION multiout_simple();
+DROP FUNCTION multiout_simple_setof(integer);
+DROP FUNCTION multiout_return_table();
+DROP FUNCTION return_record(text);
+DROP FUNCTION return_record_2(text);
+DROP TYPE type_record CASCADE;
+DROP TYPE table_record CASCADE;
