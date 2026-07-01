@@ -41,13 +41,14 @@ let init_toplevel bootstrap_code guc_stdlib_path =
   (* Parse and execute all phrases in the bootstrap code sequentially
      (the PLOCaml module definition, then the PL alias). *)
   try
-    let rec loop () =
-      let phrase = !Toploop.parse_toplevel_phrase lexbuf in
-      ignore (Toploop.execute_phrase false Format.std_formatter phrase);
-      loop ()
-    in
-    loop ()
-  with End_of_file -> ()
+    let phrases = Parse.use_file lexbuf in
+    List.iter
+      (fun phrase ->
+        ignore (Toploop.execute_phrase false Format.std_formatter phrase))
+      phrases
+  with e ->
+    Format.eprintf "PL/OCaml bootstrap error: %a@." Location.report_exception e;
+    raise e
 
 (* Universal newline support: OCaml's lexer accepts LF and CRLF but rejects a
    bare CR, so normalize CR and CRLF in the user source to LF before compiling.

@@ -1,7 +1,7 @@
 (rule
   (target pg_cflags.txt)
   (action (with-stdout-to %{target}
-            (bash "printf -- \"-I%s\" \"$(pg_config --includedir-server)\""))))
+            (bash "printf -- \"-I%s\" \"$(${PG_CONFIG:-pg_config} --includedir-server)\""))))
 
 (rule
   (target plocaml_config.ml)
