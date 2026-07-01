@@ -1,4 +1,7 @@
+// clang-format off
 #include "plocaml.h"
+// clang-format on
+
 #include <caml/alloc.h>
 #include <caml/custom.h>
 #include <caml/fail.h>
@@ -106,7 +109,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
       const char *type_name = String_val(Field(argtypes_val, i));
       Oid type_id;
       int32 typmod;
-      parseTypeString(type_name, &type_id, &typmod, false);
+      parseTypeString(type_name, &type_id, &typmod, NULL);
       argtypes[i] = type_id;
     }
 

@@ -1,3 +1,7 @@
+// clang-format off
+#include <postgres.h>
+// clang-format on
+
 #include <access/htup_details.h>
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
@@ -6,7 +10,6 @@
 #include <fmgr.h>
 #include <funcapi.h>
 #include <parser/parse_type.h>
-#include <postgres.h>
 #include <utils/builtins.h>
 #include <utils/elog.h>
 #include <utils/lsyscache.h>
