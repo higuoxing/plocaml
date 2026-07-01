@@ -3,4 +3,4 @@
 --
 SET client_min_messages = WARNING;
 
-DROP EXTENSION plocaml CASCADE;
+DROP EXTENSION plocamlu CASCADE;

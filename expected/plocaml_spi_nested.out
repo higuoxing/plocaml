@@ -2,7 +2,7 @@
 -- nested calls
 --
 CREATE FUNCTION nested_call_one(a text) RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let a_str = PL.to_string ~default:"" args.(0) in
   let q = Printf.sprintf "SELECT nested_call_two('%s')" a_str in
@@ -10,7 +10,7 @@ AS $$
   PL.String "nested_call_one"
 $$;
 CREATE FUNCTION nested_call_two(a text) RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let a_str = PL.to_string ~default:"" args.(0) in
   let q = Printf.sprintf "SELECT nested_call_three('%s')" a_str in
@@ -18,7 +18,7 @@ AS $$
   PL.String "nested_call_two"
 $$;
 CREATE FUNCTION nested_call_three(a text) RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let a_str = PL.to_string ~default:"" args.(0) in
   PL.String a_str
@@ -33,7 +33,7 @@ SELECT nested_call_one('pass this along');
 CREATE TABLE users (fname text, lname text);
 INSERT INTO users VALUES ('willem', 'doe'), ('jane', 'doe'), ('john', 'doe'), ('rick', 'smith');
 CREATE FUNCTION spi_prepared_plan_test_one(a text) RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let a_str = PL.to_string ~default:"" args.(0) in
   let q = "SELECT count(*) FROM users WHERE lname = $1" in
@@ -49,7 +49,7 @@ SELECT spi_prepared_plan_test_one('doe');
 (1 row)
 
 CREATE FUNCTION spi_recursive_sum(a int) RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let a_val = PL.to_int ~default:0 args.(0) in
   if a_val > 1 then

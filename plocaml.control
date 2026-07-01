@@ -1,5 +1,0 @@
-# plocaml extension
-comment = 'PL/OCaml procedural language'
-default_version = '1.0'
-module_pathname = '$libdir/plocaml'
-relocatable = false

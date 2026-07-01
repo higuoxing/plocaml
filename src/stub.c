@@ -114,10 +114,10 @@ void _PG_init(void) {
   }
 }
 
-PG_FUNCTION_INFO_V1(plocaml_call_handler);
-PG_FUNCTION_INFO_V1(plocaml_inline_handler);
+static void plocaml_handle_error(value res);
 
-Datum plocaml_inline_handler(PG_FUNCTION_ARGS) {
+PG_FUNCTION_INFO_V1(plocamlu_inline_handler);
+Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
   InlineCodeBlock *codeblock =
       (InlineCodeBlock *)DatumGetPointer(PG_GETARG_DATUM(0));
   char *user_sql_code = codeblock->source_text;
@@ -138,40 +138,11 @@ Datum plocaml_inline_handler(PG_FUNCTION_ARGS) {
                            caml_copy_string(user_sql_code), args_arr};
   res = caml_callbackN_exn(*execute_fn, 4, callback_args);
 
-  if (Is_exception_result(res)) {
-    res = Extract_exception(res);
-    char *err_msg =
-        strdup(String_val(Field(res, 0))); // simplified exception message
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("PL/OCaml fatal engine exception"),
-                    errdetail("%s", err_msg)));
+  if (Is_exception_result(res) || (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
+    plocaml_handle_error(res);
   }
 
-  if (Is_block(res)) {
-    int tag = Tag_val(res);
-
-    if (tag == RESULT_TAG_OK) {
-      PG_RETURN_VOID();
-    } else if (tag == RESULT_TAG_SYNTAX_ERROR) {
-      // SyntaxError of string
-      const char *err_msg = String_val(Field(res, 0));
-      ereport(ERROR,
-              (errcode(ERRCODE_SYNTAX_ERROR), errmsg("PL/OCaml syntax error"),
-               errdetail("%s", err_msg)));
-    } else if (tag == RESULT_TAG_RUNTIME_ERROR) {
-      // RuntimeError of string
-      const char *err_msg = String_val(Field(res, 0));
-      ereport(ERROR,
-              (errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-               errmsg("PL/OCaml execution failed"), errdetail("%s", err_msg)));
-    } else {
-      elog(ERROR,
-           "PL/OCaml engine error: Unexpected return variant tag from OCaml.");
-    }
-  }
-
-  elog(ERROR, "PL/OCaml engine error: Unexpected return variant from OCaml.");
-  pg_unreachable();
+  PG_RETURN_VOID();
 }
 
 static value plocaml_build_args(FunctionCallInfo fcinfo) {
@@ -365,7 +336,8 @@ static void plocaml_handle_error(value res) {
   pg_unreachable();
 }
 
-Datum plocaml_call_handler(PG_FUNCTION_ARGS) {
+PG_FUNCTION_INFO_V1(plocamlu_call_handler);
+Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
   int oid = fcinfo->flinfo->fn_oid;
   bool isnull;
   HeapTuple procTup;

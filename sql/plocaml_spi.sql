@@ -1,9 +1,9 @@
-CREATE EXTENSION IF NOT EXISTS plocaml;
+CREATE EXTENSION IF NOT EXISTS plocamlu;
 
 CREATE TABLE test1 (a int);
 
 CREATE PROCEDURE test_proc3(x int)
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let x_val = PL.to_int ~default:0 args.(0) in
   let query = "INSERT INTO test1 VALUES (" ^ string_of_int x_val ^ ")" in
@@ -21,7 +21,7 @@ DROP TABLE test1;
 -- plan and result objects
 --
 CREATE FUNCTION result_nrows_test(cmd text) RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let cmd_str = PL.to_string ~default:"" args.(0) in
   let rv = PL.execute cmd_str in
@@ -34,7 +34,7 @@ SELECT result_nrows_test($$INSERT INTO foo2 VALUES (1, 'one'), (2, 'two')$$);
 SELECT result_nrows_test($$UPDATE foo2 SET b = '' WHERE a = 2$$);
 
 CREATE FUNCTION result_status_test(cmd text) RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let cmd_str = PL.to_string ~default:"" args.(0) in
   let rv = PL.execute cmd_str in
@@ -47,7 +47,7 @@ SELECT result_status_test($$INSERT INTO foo3 VALUES (1, 'one'), (2, 'two')$$);
 SELECT result_status_test($$UPDATE foo3 SET b = '' WHERE a = 2$$);
 
 CREATE FUNCTION result_subscript_test() RETURNS void
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let rv = PL.execute "SELECT 1 AS c UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4" in
   let get_c row = PL.to_int ~default:0 (List.assoc "c" row) in
@@ -59,7 +59,7 @@ $$;
 SELECT result_subscript_test();
 
 CREATE FUNCTION result_empty_test() RETURNS void
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let rv = PL.execute "select 1 where false" in
   PL.notice (Printf.sprintf "nrows: %d, array length: %d" rv.nrows (Array.length rv.rows));
@@ -69,7 +69,7 @@ $$;
 SELECT result_empty_test();
 
 CREATE FUNCTION result_str_test(cmd text) RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let cmd_str = PL.to_string ~default:"" args.(0) in
   let plan = PL.prepare cmd_str [| |] in
@@ -103,7 +103,7 @@ INSERT INTO users VALUES
   ('jane', 'doe'),
   ('willem', 'doe');
 CREATE FUNCTION simple_cursor_test() RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let res = PL.cursor "select fname, lname from users" in
   let rv = PL.fetch res 100 in
@@ -119,7 +119,7 @@ $$;
 SELECT simple_cursor_test();
 
 CREATE FUNCTION double_cursor_close() RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let res = PL.cursor "select fname, lname from users" in
   PL.close res;
@@ -130,7 +130,7 @@ $$;
 SELECT double_cursor_close();
 
 CREATE FUNCTION cursor_fetch() RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let res = PL.cursor "select fname, lname from users" in
   let rv1 = PL.fetch res 3 in
@@ -146,7 +146,7 @@ $$;
 SELECT cursor_fetch();
 
 CREATE FUNCTION fetch_after_close() RETURNS int
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let res = PL.cursor "select fname, lname from users" in
   PL.close res;
@@ -157,7 +157,7 @@ $$;
 SELECT fetch_after_close();
 
 CREATE FUNCTION cursor_plan() RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let plan = PL.prepare "select fname, lname from users where fname like $1 || '%' order by fname" [| "text" |] in
   let res1 = PL.cursor_plan plan [| PL.String "w" |] in
@@ -176,7 +176,7 @@ $$;
 SELECT cursor_plan();
 
 CREATE FUNCTION cursor_plan_wrong_args() RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let plan = PL.prepare "select fname, lname from users where fname like $1 || '%'" [| "text" |] in
   let _ = PL.cursor_plan plan [| PL.String "a"; PL.String "b" |] in
@@ -184,7 +184,7 @@ AS $$
 $$;
 SELECT cursor_plan_wrong_args();
 CREATE FUNCTION execute_plan_wrong_args() RETURNS text
-LANGUAGE plocaml
+LANGUAGE plocamlu
 AS $$
   let plan = PL.prepare "select fname, lname from users where fname like $1 || '%'" [| "text" |] in
   let _ = PL.execute_plan plan [| PL.String "a"; PL.String "b" |] in

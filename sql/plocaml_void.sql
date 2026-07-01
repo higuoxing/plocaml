@@ -4,16 +4,16 @@
 
 CREATE FUNCTION test_void_func1() RETURNS void AS $$
   PL.Null
-$$ LANGUAGE plocaml;
+$$ LANGUAGE plocamlu;
 
 -- illegal: can't return non-Null value in void-returning func
 CREATE FUNCTION test_void_func2() RETURNS void AS $$
   PL.Int 10
-$$ LANGUAGE plocaml;
+$$ LANGUAGE plocamlu;
 
 CREATE FUNCTION test_return_none() RETURNS int AS $$
   PL.Null
-$$ LANGUAGE plocaml;
+$$ LANGUAGE plocamlu;
 
 -- Tests for functions returning void
 SELECT test_void_func1(), test_void_func1() IS NULL AS "is null";
