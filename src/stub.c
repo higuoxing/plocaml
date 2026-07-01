@@ -100,27 +100,28 @@ CAMLprim value plocaml_report(value level_val, value info) {
           strspn(sqlstate_str, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != 5)
         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("invalid SQLSTATE code")));
-      sqlstate = MAKE_SQLSTATE(sqlstate_str[0], sqlstate_str[1], sqlstate_str[2],
-                               sqlstate_str[3], sqlstate_str[4]);
+      sqlstate =
+          MAKE_SQLSTATE(sqlstate_str[0], sqlstate_str[1], sqlstate_str[2],
+                        sqlstate_str[3], sqlstate_str[4]);
     }
 
-    ereport(elevel,
-            ((sqlstate != 0) ? errcode(sqlstate) : 0,
-             errmsg_internal("%s", message),
-             (detail) ? errdetail_internal("%s", detail) : 0,
-             (hint) ? errhint("%s", hint) : 0,
-             (column_name) ? err_generic_string(PG_DIAG_COLUMN_NAME, column_name)
-                           : 0,
-             (constraint_name)
-                 ? err_generic_string(PG_DIAG_CONSTRAINT_NAME, constraint_name)
-                 : 0,
-             (datatype_name)
-                 ? err_generic_string(PG_DIAG_DATATYPE_NAME, datatype_name)
-                 : 0,
-             (table_name) ? err_generic_string(PG_DIAG_TABLE_NAME, table_name)
-                          : 0,
-             (schema_name) ? err_generic_string(PG_DIAG_SCHEMA_NAME, schema_name)
-                           : 0));
+    ereport(
+        elevel,
+        ((sqlstate != 0) ? errcode(sqlstate) : 0,
+         errmsg_internal("%s", message),
+         (detail) ? errdetail_internal("%s", detail) : 0,
+         (hint) ? errhint("%s", hint) : 0,
+         (column_name) ? err_generic_string(PG_DIAG_COLUMN_NAME, column_name)
+                       : 0,
+         (constraint_name)
+             ? err_generic_string(PG_DIAG_CONSTRAINT_NAME, constraint_name)
+             : 0,
+         (datatype_name)
+             ? err_generic_string(PG_DIAG_DATATYPE_NAME, datatype_name)
+             : 0,
+         (table_name) ? err_generic_string(PG_DIAG_TABLE_NAME, table_name) : 0,
+         (schema_name) ? err_generic_string(PG_DIAG_SCHEMA_NAME, schema_name)
+                       : 0));
     /* elevel < ERROR returns here; ERROR longjmps to PG_CATCH. */
   }
   PG_CATCH();
@@ -236,7 +237,8 @@ Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
                            caml_copy_string(user_sql_code), args_arr};
   res = caml_callbackN_exn(*execute_fn, 4, callback_args);
 
-  if (Is_exception_result(res) || (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
+  if (Is_exception_result(res) ||
+      (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
     plocaml_handle_error(res);
   }
 
