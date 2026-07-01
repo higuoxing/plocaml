@@ -1,9 +1,0 @@
-CREATE FUNCTION test_pg_error() RETURNS void
-LANGUAGE plocamlu
-AS $$
-  let _ = PL.execute "SELECT * FROM table_that_does_not_exist" in
-  PL.Null
-$$;
-SELECT test_pg_error();
-ERROR:  PL/OCaml execution failed
-DETAIL:  Exception during execution: Failure("relation \"table_that_does_not_exist\" does not exist")

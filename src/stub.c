@@ -53,6 +53,22 @@ CAMLprim value plocaml_magic_keepalive(value unit) {
   CAMLreturn(Val_unit);
 }
 
+/*
+ * Capture the in-flight PostgreSQL error and mark it pending so that
+ * plocaml_handle_error re-throws it at the call boundary, preserving every
+ * field (sqlstate, detail, hint, ...). Must be called from within a PG_CATCH,
+ * with the current memory context switched away from ErrorContext. Returns the
+ * error message (valid until the next plocaml_reset_error_state).
+ */
+const char *plocaml_stash_pending_error(void) {
+  MemoryContext old = MemoryContextSwitchTo(plocaml_error_cxt);
+  ErrorData *edata = CopyErrorData();
+  FlushErrorState();
+  MemoryContextSwitchTo(old);
+  plocaml_pending_edata = edata;
+  return edata->message;
+}
+
 /* Read a [string option] record field: None -> NULL, Some s -> s. */
 #define OPT_STR(info, i)                                                       \
   (Is_block(Field((info), (i))) ? String_val(Field(Field((info), (i)), 0))     \
@@ -74,7 +90,7 @@ CAMLprim value plocaml_report(value level_val, value info) {
 
   MemoryContext caller_context = CurrentMemoryContext;
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg_copy = NULL;
 
   PG_TRY();
   {
@@ -109,18 +125,15 @@ CAMLprim value plocaml_report(value level_val, value info) {
   }
   PG_CATCH();
   {
-    MemoryContextSwitchTo(plocaml_error_cxt);
-    edata = CopyErrorData();
-    FlushErrorState();
     MemoryContextSwitchTo(caller_context);
+    errmsg_copy = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
 
   if (failed) {
-    /* Stash for re-throw at the call boundary, then unwind through OCaml. */
-    plocaml_pending_edata = edata;
-    caml_failwith(edata->message ? edata->message : "PL/OCaml error");
+    /* Unwind through OCaml; the boundary re-throws the stashed error. */
+    caml_failwith(errmsg_copy ? errmsg_copy : "PL/OCaml error");
   }
 
   CAMLreturn(Val_unit);

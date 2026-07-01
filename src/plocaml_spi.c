@@ -97,7 +97,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
   }
 
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
   SPIPlanPtr plan = NULL;
 
   int nargs = Wosize_val(argtypes_val);
@@ -123,8 +123,7 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
@@ -133,10 +132,8 @@ CAMLprim value plocaml_spi_prepare(value query_val, value argtypes_val) {
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_prepare failed");
     }
@@ -172,7 +169,7 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
 
   int res = 0;
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
 
   Datum *Values = palloc(nargs * sizeof(Datum));
   char *Nulls = palloc(nargs * sizeof(char));
@@ -210,8 +207,7 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
@@ -221,10 +217,8 @@ CAMLprim value plocaml_spi_execute_plan(value plan_val, value args_val) {
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_execute_plan failed");
     }
@@ -247,7 +241,7 @@ CAMLprim value plocaml_spi_cursor(value query_val) {
   }
 
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
   Portal cursor = NULL;
   SPIPlanPtr plan = NULL;
 
@@ -265,18 +259,15 @@ CAMLprim value plocaml_spi_cursor(value query_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_cursor failed");
     }
@@ -312,7 +303,7 @@ CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
   }
 
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
   Portal cursor = NULL;
 
   Datum *Values = palloc(nargs * sizeof(Datum));
@@ -351,8 +342,7 @@ CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
@@ -362,10 +352,8 @@ CAMLprim value plocaml_spi_cursor_plan(value plan_val, value args_val) {
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_cursor_plan failed");
     }
@@ -395,7 +383,7 @@ CAMLprim value plocaml_spi_fetch(value cursor_val, value count_val) {
   int count = Int_val(count_val);
   int res = 0;
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
 
   PG_TRY();
   {
@@ -405,18 +393,15 @@ CAMLprim value plocaml_spi_fetch(value cursor_val, value count_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_fetch failed");
     }
@@ -448,7 +433,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
 
   int res = 0;
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
 
   int nargs = Wosize_val(args_val);
   Oid *argtypes = palloc(nargs * sizeof(Oid));
@@ -493,8 +478,7 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
@@ -505,10 +489,8 @@ CAMLprim value plocaml_spi_execute_with_args(value query_val, value args_val) {
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_execute_with_args failed");
     }
@@ -531,7 +513,7 @@ CAMLprim value plocaml_spi_execute(value query_val) {
 
   int res = 0;
   volatile bool failed = false;
-  ErrorData *edata = NULL;
+  const char *errmsg = NULL;
 
   PG_TRY();
   {
@@ -543,18 +525,15 @@ CAMLprim value plocaml_spi_execute(value query_val) {
   PG_CATCH();
   {
     MemoryContextSwitchTo(caller_context);
-    edata = CopyErrorData();
-    FlushErrorState();
+    errmsg = plocaml_stash_pending_error();
     failed = true;
   }
   PG_END_TRY();
 
   if (failed) {
     SPI_finish();
-    if (edata) {
-      char *msg = pstrdup(edata->message);
-      FreeErrorData(edata);
-      caml_failwith(msg);
+    if (errmsg) {
+      caml_failwith(errmsg);
     } else {
       caml_failwith("PL/OCaml SPI_execute failed");
     }

@@ -19,4 +19,11 @@
 
 value make_ocaml_datum(Oid type_oid, Datum val, bool isnull);
 
+/*
+ * Capture the in-flight PostgreSQL error (inside a PG_CATCH) and mark it
+ * pending so the PL/OCaml call boundary re-throws it with all fields intact.
+ * Returns the error message. Defined in stub.c.
+ */
+const char *plocaml_stash_pending_error(void);
+
 #endif
