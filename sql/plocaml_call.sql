@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-
 --
 -- Tests for procedures / CALL syntax
 --

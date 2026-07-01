@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-
 --
 -- check static and global data (SD and GD), mirroring PL/Python's
 -- plpython_global test. SD is private to each function; GD is shared across

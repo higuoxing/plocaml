@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-
 CREATE TABLE test1 (a int);
 
 CREATE PROCEDURE test_proc3(x int)

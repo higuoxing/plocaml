@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-NOTICE:  extension "plocamlu" already exists, skipping
 --
 -- Mirror of PL/Python's plpython_ereport test. PL/OCaml exposes the error
 -- fields (detail, hint, sqlstate, schema_name, ...) as optional labeled

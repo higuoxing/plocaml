@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-
 --
 -- Mirror of PL/Python's plpython_error test, covering the error-handling
 -- behavior that maps onto PL/OCaml. Errors raised through PL.execute now

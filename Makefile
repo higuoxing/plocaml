@@ -1,7 +1,8 @@
 EXTENSION = plocamlu
 DATA = plocamlu--1.0.sql
 MODULES = plocamlu
-REGRESS = plocaml_call plocaml_spi plocaml_void plocaml_do plocaml_spi_nested plocaml_composite plocaml_gd_sd plocaml_global plocaml_ereport plocaml_error plocaml_drop
+REGRESS = plocaml_call plocaml_spi plocaml_void plocaml_do plocaml_spi_nested plocaml_composite plocaml_gd_sd plocaml_global plocaml_import plocaml_ereport plocaml_error plocaml_drop
+REGRESS_OPTS = --load-extension=plocamlu
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

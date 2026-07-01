@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS plocamlu;
-
 --
 -- Tests for the GD (global, session-wide) and SD (per-function) stores,
 -- mirroring PL/Python. A store holds values of ANY type; use PL.set / PL.get /
