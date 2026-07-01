@@ -13,7 +13,7 @@
   (modules)
   (foreign_stubs
     (language c)
-    (names stub plocaml_spi)
+    (names stub spi typeio)
     (flags (:include pg_cflags.txt) -fPIC -D_GNU_SOURCE -std=c23)
     (extra_deps bootstrap.ml plocaml.h)))
 

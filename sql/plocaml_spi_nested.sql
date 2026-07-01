@@ -60,3 +60,10 @@ AS $$
 $$;
 
 SELECT spi_recursive_sum(10);
+
+DROP FUNCTION nested_call_one(text);
+DROP FUNCTION nested_call_two(text);
+DROP FUNCTION nested_call_three(text);
+DROP FUNCTION spi_prepared_plan_test_one(text);
+DROP FUNCTION spi_recursive_sum(int);
+DROP TABLE users;

@@ -57,10 +57,28 @@ $$ LANGUAGE plocamlu;
 
 SELECT * FROM return_record_2('v3') AS (v1 int, v2 int, v3 text);
 
+-- Composite result built from a string, parsed via the row type's input
+-- function (mirrors PL/Python's string form for composites), alongside the
+-- Record (by name) and Array (positional) forms.
+CREATE FUNCTION return_record_string(t text) RETURNS type_record AS $$
+  PL.String (Printf.sprintf "(%s,42)" (PL.to_string ~default:"" args.(0)))
+$$ LANGUAGE plocamlu;
+
+SELECT * FROM return_record_string('hello');
+SELECT (return_record_string('world')).second;
+
+CREATE FUNCTION return_record_by_name(t text) RETURNS type_record AS $$
+  PL.Record [ "second", PL.Int 42; "first", args.(0) ]
+$$ LANGUAGE plocamlu;
+
+SELECT * FROM return_record_by_name('hello');
+
 DROP FUNCTION multiout_simple();
 DROP FUNCTION multiout_simple_setof(integer);
 DROP FUNCTION multiout_return_table();
 DROP FUNCTION return_record(text);
 DROP FUNCTION return_record_2(text);
+DROP FUNCTION return_record_string(text);
+DROP FUNCTION return_record_by_name(text);
 DROP TYPE type_record CASCADE;
 DROP TYPE table_record CASCADE;

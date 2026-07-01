@@ -16,6 +16,7 @@
 #include <utils/memutils.h>
 #include <utils/syscache.h>
 #include <utils/tuplestore.h>
+#include <utils/typcache.h>
 
 #include <caml/alloc.h>
 #include <caml/callback.h>
@@ -140,46 +141,6 @@ CAMLprim value plocaml_report(value level_val, value info) {
   CAMLreturn(Val_unit);
 }
 
-value make_ocaml_datum(Oid type_oid, Datum val, bool isnull) {
-  CAMLparam0();
-  CAMLlocal2(v, s);
-
-  if (isnull) {
-    CAMLreturn(Val_int(0)); // Null variant
-  }
-
-  if (type_oid == INT4OID) {
-    v = caml_alloc(1, DATUM_TAG_INT);
-    Store_field(v, 0, Val_int(DatumGetInt32(val)));
-  } else if (type_oid == INT8OID) {
-    v = caml_alloc(1, DATUM_TAG_INT);
-    Store_field(v, 0, Val_int(DatumGetInt64(val)));
-  } else if (type_oid == INT2OID) {
-    v = caml_alloc(1, DATUM_TAG_INT);
-    Store_field(v, 0, Val_int(DatumGetInt16(val)));
-  } else if (type_oid == FLOAT8OID) {
-    v = caml_alloc(1, DATUM_TAG_FLOAT);
-    value f = caml_copy_double(DatumGetFloat8(val));
-    Store_field(v, 0, f);
-  } else if (type_oid == BOOLOID) {
-    v = caml_alloc(1, DATUM_TAG_BOOL);
-    bool b = DatumGetBool(val);
-    Store_field(v, 0, Val_int(b ? 1 : 0));
-  } else {
-    // Default to string for everything else
-    v = caml_alloc(1, DATUM_TAG_STRING);
-    char *str;
-    Oid typoutput;
-    bool typisvarlena;
-    getTypeOutputInfo(type_oid, &typoutput, &typisvarlena);
-    str = OidOutputFunctionCall(typoutput, val);
-    s = caml_copy_string(str);
-    Store_field(v, 0, s);
-    pfree(str);
-  }
-  CAMLreturn(v);
-}
-
 void _PG_init(void) {
   DefineCustomStringVariable(
       "plocaml.stdlib_path", "Path to the OCaml standard library (.cmi files)",
@@ -196,10 +157,13 @@ void _PG_init(void) {
   /* Initialize top level. */
   const value *init_top_level_fn = caml_named_value("plocaml_init_toplevel");
   if (init_top_level_fn) {
-    value boot_val = caml_copy_string(plocaml_bootstrap_code);
-    value stdlib_val =
+    value boot_val = Val_unit, stdlib_val = Val_unit;
+    Begin_roots2(boot_val, stdlib_val);
+    boot_val = caml_copy_string(plocaml_bootstrap_code);
+    stdlib_val =
         caml_copy_string(plocaml_stdlib_path ? plocaml_stdlib_path : "");
     caml_callback2(*init_top_level_fn, boot_val, stdlib_val);
+    End_roots();
   }
 }
 
@@ -224,7 +188,8 @@ Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
 
   plocaml_reset_error_state();
 
-  args_arr = caml_alloc(0, 0); // Empty array
+  args_arr = caml_alloc(0, 0);        // Empty array
+  value arg_names = caml_alloc(0, 0); // No named parameters in a DO block
 
   const value *execute_fn = caml_named_value("plocaml_execute");
   if (!execute_fn) {
@@ -234,8 +199,9 @@ Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
   }
 
   value callback_args[] = {Val_int(oid), caml_copy_string(func_name),
-                           caml_copy_string(user_sql_code), args_arr};
-  res = caml_callbackN_exn(*execute_fn, 4, callback_args);
+                           caml_copy_string(user_sql_code), arg_names,
+                           args_arr};
+  res = caml_callbackN_exn(*execute_fn, 5, callback_args);
 
   if (Is_exception_result(res) ||
       (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
@@ -245,119 +211,31 @@ Datum plocamlu_inline_handler(PG_FUNCTION_ARGS) {
   PG_RETURN_VOID();
 }
 
-static value plocaml_build_args(FunctionCallInfo fcinfo) {
-  int nargs = PG_NARGS();
-  value args_arr = caml_alloc(nargs, 0); // 0 tag for Tuple/Array
-  for (int i = 0; i < nargs; i++) {
-    value v;
-    if (PG_ARGISNULL(i)) {
-      v = Val_int(0); // Null variant (integer 0)
-    } else {
-      Oid type_oid = get_fn_expr_argtype(fcinfo->flinfo, i);
-      Datum arg = PG_GETARG_DATUM(i);
-
-      if (type_oid == INT4OID) {
-        v = caml_alloc(1, DATUM_TAG_INT);
-        Store_field(v, 0, Val_int(DatumGetInt32(arg)));
-      } else if (type_oid == FLOAT8OID) {
-        v = caml_alloc(1, DATUM_TAG_FLOAT);
-        value f = caml_copy_double(DatumGetFloat8(arg));
-        Store_field(v, 0, f);
-      } else if (type_oid == TEXTOID || type_oid == VARCHAROID) {
-        v = caml_alloc(1, DATUM_TAG_STRING);
-        char *str = TextDatumGetCString(arg);
-        value s = caml_copy_string(str);
-        Store_field(v, 0, s);
-        pfree(str);
-      } else if (type_oid == BOOLOID) {
-        v = caml_alloc(1, DATUM_TAG_BOOL);
-        bool b = DatumGetBool(arg);
-        Store_field(v, 0, Val_int(b ? 1 : 0));
-      } else {
-        elog(ERROR, "PL/OCaml: unsupported argument type OID %u", type_oid);
-      }
-    }
-    Store_field(args_arr, i, v);
-  }
-  return args_arr;
-}
-
-static HeapTuple plocaml_build_heap_tuple(value arr, TupleDesc tupdesc) {
-  int arr_len = Wosize_val(arr);
-  if (arr_len != tupdesc->natts) {
-    ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
-                    errmsg("length of returned sequence did not match number "
-                           "of columns in row")));
-  }
-
-  Datum *values = palloc(tupdesc->natts * sizeof(Datum));
-  bool *nulls = palloc(tupdesc->natts * sizeof(bool));
-
-  for (int i = 0; i < tupdesc->natts; i++) {
-    value elem = Field(arr, i);
-    if (Is_long(elem)) {
-      nulls[i] = true;
-      values[i] = (Datum)0;
-    } else {
-      nulls[i] = false;
-      int e_tag = Tag_val(elem);
-      if (e_tag == DATUM_TAG_INT) {
-        values[i] = Int32GetDatum(Int_val(Field(elem, 0)));
-      } else if (e_tag == DATUM_TAG_FLOAT) {
-        values[i] = Float8GetDatum(Double_val(Field(elem, 0)));
-      } else if (e_tag == DATUM_TAG_STRING) {
-        values[i] = CStringGetTextDatum(String_val(Field(elem, 0)));
-      } else if (e_tag == DATUM_TAG_BOOL) {
-        values[i] = BoolGetDatum(Int_val(Field(elem, 0)) != 0);
-      } else {
-        elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag in "
-                    "array element.");
-      }
+/* Build a string array of the input-argument names (aligned with the input
+   args, "" for unnamed ones), so the OCaml wrapper can bind each as a local. */
+static value plocaml_build_arg_names(char **argnames, char *argmodes,
+                                     int total_args, int nargs) {
+  CAMLparam0();
+  CAMLlocal1(names_arr);
+  names_arr = caml_alloc(nargs, 0);
+  int idx = 0;
+  for (int i = 0; i < total_args && idx < nargs; i++) {
+    char mode = argmodes ? argmodes[i] : PROARGMODE_IN;
+    if (mode == PROARGMODE_IN || mode == PROARGMODE_INOUT ||
+        mode == PROARGMODE_VARIADIC) {
+      const char *nm = (argnames && argnames[i]) ? argnames[i] : "";
+      Store_field(names_arr, idx, caml_copy_string(nm));
+      idx++;
     }
   }
-
-  HeapTuple tuple = heap_form_tuple(tupdesc, values, nulls);
-  pfree(values);
-  pfree(nulls);
-  return tuple;
+  for (; idx < nargs; idx++)
+    Store_field(names_arr, idx, caml_copy_string(""));
+  CAMLreturn(names_arr);
 }
 
-static Datum plocaml_convert_datum(FunctionCallInfo fcinfo, value datum_val,
-                                   bool *isnull) {
-  if (Is_long(datum_val)) {
-    *isnull = true;
-    return (Datum)0;
-  }
-
-  *isnull = false;
-  int d_tag = Tag_val(datum_val);
-
-  if (d_tag == DATUM_TAG_INT) {
-    return Int32GetDatum(Int_val(Field(datum_val, 0)));
-  } else if (d_tag == DATUM_TAG_FLOAT) {
-    return Float8GetDatum(Double_val(Field(datum_val, 0)));
-  } else if (d_tag == DATUM_TAG_STRING) {
-    return CStringGetTextDatum(String_val(Field(datum_val, 0)));
-  } else if (d_tag == DATUM_TAG_BOOL) {
-    return BoolGetDatum(Int_val(Field(datum_val, 0)) != 0);
-  } else if (d_tag == DATUM_TAG_ARRAY) {
-    TupleDesc tupdesc;
-    if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("function returning record called in context that "
-                             "cannot accept type record")));
-    }
-    BlessTupleDesc(tupdesc);
-    HeapTuple tuple = plocaml_build_heap_tuple(Field(datum_val, 0), tupdesc);
-    Datum return_datum = heap_copy_tuple_as_datum(tuple, tupdesc);
-    heap_freetuple(tuple);
-    return return_datum;
-  } else {
-    elog(ERROR, "PL/OCaml engine error: Unexpected datum variant tag.");
-  }
-  return (Datum)0;
-}
-
+/* Convert a composite (row) Datum into a PL.Record: a (column-name, value)
+   association list in column order, giving field-by-name access like
+   PL/Python's dict (and matching the shape of SPI result rows). */
 static Datum plocaml_handle_setof(FunctionCallInfo fcinfo, value datum_val) {
   ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
   if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo) ||
@@ -391,11 +269,14 @@ static Datum plocaml_handle_setof(FunctionCallInfo fcinfo, value datum_val) {
     value row_val = Field(rows_arr, r);
 
     if (is_composite) {
-      if (Is_long(row_val) || Tag_val(row_val) != DATUM_TAG_ARRAY) {
-        ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
-                        errmsg("SETOF record must return an array of arrays")));
+      if (Is_long(row_val) || (Tag_val(row_val) != DATUM_TAG_ARRAY &&
+                               Tag_val(row_val) != DATUM_TAG_RECORD)) {
+        ereport(ERROR,
+                (errcode(ERRCODE_DATATYPE_MISMATCH),
+                 errmsg("SETOF record must return an array of PL.Array or "
+                        "PL.Record rows")));
       }
-      HeapTuple tuple = plocaml_build_heap_tuple(Field(row_val, 0), tupdesc);
+      HeapTuple tuple = plocaml_composite_to_heap_tuple(row_val, tupdesc);
       tuplestore_puttuple(rsinfo->setResult, tuple);
       heap_freetuple(tuple);
     } else {
@@ -466,6 +347,14 @@ Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
       SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_proname, &name_isnull);
   func_name = NameStr(*DatumGetName(proname_datum));
 
+  /* Fetch argument names/modes (palloc'd copies survive ReleaseSysCache) so the
+     wrapper can expose named parameters as locals. */
+  Oid *argtypes;
+  char **argnames;
+  char *argmodes;
+  int total_args = get_func_arg_info(procTup, &argtypes, &argnames, &argmodes);
+  (void)argtypes;
+
   prosrc = SysCacheGetAttr(PROCOID, procTup, Anum_pg_proc_prosrc, &isnull);
   if (isnull) {
     ReleaseSysCache(procTup);
@@ -477,6 +366,8 @@ Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
   prosrc = (Datum)0;
 
   args_arr = plocaml_build_args(fcinfo);
+  value arg_names =
+      plocaml_build_arg_names(argnames, argmodes, total_args, PG_NARGS());
 
   const value *execute_fn = caml_named_value("plocaml_execute");
   if (!execute_fn) {
@@ -486,8 +377,9 @@ Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
   }
 
   value callback_args[] = {Val_int(oid), caml_copy_string(func_name),
-                           caml_copy_string(user_sql_code), args_arr};
-  res = caml_callbackN_exn(*execute_fn, 4, callback_args);
+                           caml_copy_string(user_sql_code), arg_names,
+                           args_arr};
+  res = caml_callbackN_exn(*execute_fn, 5, callback_args);
 
   if (Is_exception_result(res) ||
       (Is_block(res) && Tag_val(res) != RESULT_TAG_OK)) {
