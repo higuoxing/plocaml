@@ -4,6 +4,7 @@ MODULES = plocamlu
 REGRESS = \
 	plocaml_schema \
 	plocaml_populate \
+	plocaml_test \
 	plocaml_call \
 	plocaml_spi \
 	plocaml_void \

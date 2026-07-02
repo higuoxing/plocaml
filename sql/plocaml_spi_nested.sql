@@ -29,8 +29,6 @@ $$;
 SELECT nested_call_one('pass this along');
 
 -- some spi stuff
-CREATE TABLE users (fname text, lname text);
-INSERT INTO users VALUES ('willem', 'doe'), ('jane', 'doe'), ('john', 'doe'), ('rick', 'smith');
 
 CREATE FUNCTION spi_prepared_plan_test_one(a text) RETURNS text
 LANGUAGE plocamlu
@@ -66,4 +64,3 @@ DROP FUNCTION nested_call_two(text);
 DROP FUNCTION nested_call_three(text);
 DROP FUNCTION spi_prepared_plan_test_one(text);
 DROP FUNCTION spi_recursive_sum(int);
-DROP TABLE users;

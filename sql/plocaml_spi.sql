@@ -180,4 +180,3 @@ AS $$
   PL.String "should not reach here"
 $$;
 SELECT execute_plan_wrong_args();
-DROP TABLE users;

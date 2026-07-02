@@ -250,4 +250,3 @@ $$;
 SELECT execute_plan_wrong_args();
 ERROR:  PL/OCaml execution failed
 DETAIL:  Exception during execution: Failure("PL/OCaml: incorrect number of arguments for plan")
-DROP TABLE users;

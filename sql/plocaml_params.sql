@@ -25,8 +25,6 @@ $$ LANGUAGE plocamlu;
 
 -- Composite-type parameter: the row arrives as a PL.Record, accessed by
 -- column name.
-CREATE TABLE users (userid int, username text, fname text, lname text);
-INSERT INTO users VALUES (1, 'j_doe', 'jane', 'doe'), (2, 'johnd', 'john', 'doe');
 
 CREATE FUNCTION test_param_names2(u users) RETURNS text AS $$
   match args.(0) with
@@ -64,7 +62,7 @@ SELECT test_param_names_add(40, 2);
 SELECT test_param_names2(users) FROM users ORDER BY userid;
 SELECT test_param_names2(NULL);
 SELECT * FROM make_user(7, 'g7');
-SELECT * FROM uppercase_names(ROW(1, 'j_doe', 'jane', 'doe')::users);
+SELECT * FROM uppercase_names(ROW('jane', 'doe', 'j_doe', 1)::users);
 
 DROP FUNCTION test_param_names0;
 DROP FUNCTION test_param_names1;
@@ -72,4 +70,3 @@ DROP FUNCTION test_param_names_add;
 DROP FUNCTION test_param_names2;
 DROP FUNCTION make_user;
 DROP FUNCTION uppercase_names;
-DROP TABLE users;
