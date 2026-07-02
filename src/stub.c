@@ -408,3 +408,42 @@ Datum plocamlu_call_handler(PG_FUNCTION_ARGS) {
   fcinfo->isnull = ret_isnull;
   return return_datum;
 }
+
+CAMLprim value plocaml_quote_literal(value str_val) {
+  CAMLparam1(str_val);
+  CAMLlocal1(res);
+  char *quoted;
+
+  quoted = quote_literal_cstr(String_val(str_val));
+  res = caml_copy_string(quoted);
+  pfree(quoted);
+
+  CAMLreturn(res);
+}
+
+CAMLprim value plocaml_quote_nullable(value str_opt_val) {
+  CAMLparam1(str_opt_val);
+  CAMLlocal1(res);
+  char *quoted;
+
+  if (str_opt_val == Val_int(0)) { /* None */
+    res = caml_copy_string("NULL");
+  } else {
+    quoted = quote_literal_cstr(String_val(Field(str_opt_val, 0)));
+    res = caml_copy_string(quoted);
+    pfree(quoted);
+  }
+
+  CAMLreturn(res);
+}
+
+CAMLprim value plocaml_quote_ident(value str_val) {
+  CAMLparam1(str_val);
+  CAMLlocal1(res);
+  const char *quoted;
+
+  quoted = quote_identifier(String_val(str_val));
+  res = caml_copy_string(quoted);
+
+  CAMLreturn(res);
+}

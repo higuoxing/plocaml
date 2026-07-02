@@ -23,7 +23,10 @@ let () =
   ignore cursor_plan;
   ignore fetch;
   ignore close;
-  ignore _report
+  ignore _report;
+  ignore quote_literal;
+  ignore quote_nullable;
+  ignore quote_ident
 
 let init_toplevel bootstrap_code guc_stdlib_path =
   Compmisc.init_path ();

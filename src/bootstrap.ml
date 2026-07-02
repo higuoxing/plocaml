@@ -127,6 +127,9 @@ module PLOCaml = struct
 
   external execute : string -> spi_result = "plocaml_spi_execute"
   external prepare : string -> string array -> plan = "plocaml_spi_prepare"
+  external quote_literal : string -> string = "plocaml_quote_literal"
+  external quote_nullable : string option -> string = "plocaml_quote_nullable"
+  external quote_ident : string -> string = "plocaml_quote_ident"
 
   external execute_with_args : string -> datum array -> spi_result
     = "plocaml_spi_execute_with_args"
