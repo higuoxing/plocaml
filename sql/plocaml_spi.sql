@@ -91,15 +91,6 @@ SELECT result_str_test($$SELECT 1 AS foo UNION SELECT 2$$);
 SELECT result_str_test($$CREATE TEMPORARY TABLE foo1 (a int, b text)$$);
 
 -- cursor objects
-CREATE TABLE users (
-    fname text,
-    lname text
-);
-INSERT INTO users VALUES
-  ('rick', 'smith'),
-  ('john', 'doe'),
-  ('jane', 'doe'),
-  ('willem', 'doe');
 CREATE FUNCTION simple_cursor_test() RETURNS int
 LANGUAGE plocamlu
 AS $$
