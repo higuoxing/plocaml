@@ -244,7 +244,11 @@ static Datum plocaml_handle_setof(FunctionCallInfo fcinfo, value datum_val) {
                     errmsg("set-valued function called in context that cannot "
                            "accept a set")));
 
-  InitMaterializedSRF(fcinfo, 0);
+  if (get_call_result_type(fcinfo, NULL, NULL) == TYPEFUNC_COMPOSITE) {
+    InitMaterializedSRF(fcinfo, 0);
+  } else {
+    InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
+  }
 
   if (Is_long(datum_val)) {
     return (Datum)0; // empty set

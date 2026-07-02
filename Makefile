@@ -6,6 +6,7 @@ REGRESS = \
 	plocaml_populate \
 	plocaml_test \
 	plocaml_call \
+	plocaml_setof \
 	plocaml_spi \
 	plocaml_void \
 	plocaml_do \

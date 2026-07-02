@@ -49,7 +49,7 @@ $$
     "to_int"; "to_int_exn"; "to_int_opt"; "to_record_exn"; "to_record_opt";
     "to_string"; "to_string_exn"; "to_string_opt"; "warning"
   ] in
-  let arr = Array.of_list (List.map (fun s -> PL.Array [| PL.String s |]) contents) in
+  let arr = Array.of_list (List.map (fun s -> PL.String s) contents) in
   PL.Array arr
 $$ LANGUAGE plocamlu;
 

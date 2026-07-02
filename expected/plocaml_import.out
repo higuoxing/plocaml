@@ -16,7 +16,7 @@ AS $$
 $$;
 SELECT import_fail();
 ERROR:  PL/OCaml execution failed
-DETAIL:  File "[PL/OCaml function import_fail]", line 2, characters 10-27:
+DETAIL:  File "[PL/OCaml function import_fail]", line 2, characters 10-19:
 Error: Unbound module Foosocket
 
 -- Stdlib modules are always available; just use them.

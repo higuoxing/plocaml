@@ -59,11 +59,74 @@ $$
     "to_int"; "to_int_exn"; "to_int_opt"; "to_record_exn"; "to_record_opt";
     "to_string"; "to_string_exn"; "to_string_opt"; "warning"
   ] in
-  let arr = Array.of_list (List.map (fun s -> PL.Array [| PL.String s |]) contents) in
+  let arr = Array.of_list (List.map (fun s -> PL.String s) contents) in
   PL.Array arr
 $$ LANGUAGE plocamlu;
 select * from module_contents();
-ERROR:  return type must be a row type
+  module_contents  
+-------------------
+ Array
+ Bool
+ Debug1
+ Debug2
+ Debug3
+ Debug4
+ Debug5
+ Error
+ Float
+ Info
+ Int
+ Log
+ Notice
+ Null
+ Record
+ String
+ Warning
+ close
+ cursor
+ cursor_plan
+ debug
+ elog
+ error
+ execute
+ execute_plan
+ execute_with_args
+ fetch
+ field
+ gd
+ get
+ get_opt
+ get_sd
+ info
+ log
+ log_level_to_int
+ notice
+ prepare
+ quote_ident
+ quote_literal
+ quote_nullable
+ report
+ set
+ to_array
+ to_array_exn
+ to_array_opt
+ to_bool
+ to_bool_exn
+ to_bool_opt
+ to_float
+ to_float_exn
+ to_float_opt
+ to_int
+ to_int_exn
+ to_int_opt
+ to_record_exn
+ to_record_opt
+ to_string
+ to_string_exn
+ to_string_opt
+ warning
+(60 rows)
+
 CREATE FUNCTION elog_test_basic() RETURNS void
 AS $$
   PL.debug "debug";
