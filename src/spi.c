@@ -43,8 +43,7 @@ static struct custom_operations spi_plan_ops = {
 
 static value build_spi_result(int status, int nrows) {
   CAMLparam0();
-  CAMLlocal4(res, rows_arr, row_list, pair);
-  CAMLlocal2(col_name, col_val);
+  CAMLlocal2(res, rows_arr);
 
   rows_arr = caml_alloc(nrows, 0);
 
@@ -52,29 +51,10 @@ static value build_spi_result(int status, int nrows) {
     TupleDesc tupdesc = SPI_tuptable->tupdesc;
     for (int i = 0; i < nrows; i++) {
       HeapTuple tuple = SPI_tuptable->vals[i];
-      row_list = Val_int(0); // []
-
-      // Build the list backwards so it ends up in the correct order
-      for (int j = tupdesc->natts; j > 0; j--) {
-        bool isnull;
-        Datum val = SPI_getbinval(tuple, tupdesc, j, &isnull);
-        Oid type_oid = SPI_gettypeid(tupdesc, j);
-        char *fname = SPI_fname(tupdesc, j);
-
-        col_name = caml_copy_string(fname);
-        pfree(fname);
-        col_val = make_ocaml_datum(type_oid, val, isnull);
-
-        pair = caml_alloc(2, 0);
-        Store_field(pair, 0, col_name);
-        Store_field(pair, 1, col_val);
-
-        value new_node = caml_alloc(2, 0);
-        Store_field(new_node, 0, pair);
-        Store_field(new_node, 1, row_list);
-        row_list = new_node;
-      }
-      Store_field(rows_arr, i, row_list);
+      /* spi_result stores each row as a bare (name, value) association list, so
+         unwrap the Record produced by the shared helper. */
+      value record_val = plocaml_heap_tuple_to_record(tuple, tupdesc);
+      Store_field(rows_arr, i, Field(record_val, 0));
     }
   }
 

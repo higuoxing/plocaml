@@ -35,5 +35,6 @@ HeapTuple plocaml_composite_to_heap_tuple(value composite, TupleDesc tupdesc);
  * Returns the error message. Defined in stub.c.
  */
 const char *plocaml_stash_pending_error(void);
+value plocaml_heap_tuple_to_record(HeapTuple tuple, TupleDesc tupdesc);
 
 #endif

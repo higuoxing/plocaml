@@ -295,3 +295,38 @@ Datum plocaml_convert_datum(FunctionCallInfo fcinfo, value datum_val,
   }
   return (Datum)0;
 }
+
+value plocaml_heap_tuple_to_record(HeapTuple tuple, TupleDesc tupdesc) {
+  CAMLparam0();
+  CAMLlocal4(row_list, pair, col_name, col_val);
+
+  row_list = Val_int(0); // []
+
+  // Build the list backwards so it ends up in the correct order
+  for (int j = tupdesc->natts; j > 0; j--) {
+    Form_pg_attribute att = TupleDescAttr(tupdesc, j - 1);
+    if (att->attisdropped)
+      continue;
+
+    bool isnull;
+    Datum val = heap_getattr(tuple, j, tupdesc, &isnull);
+    Oid type_oid = att->atttypid;
+    char *fname = NameStr(att->attname);
+
+    col_name = caml_copy_string(fname);
+    col_val = make_ocaml_datum(type_oid, val, isnull);
+
+    pair = caml_alloc(2, 0);
+    Store_field(pair, 0, col_name);
+    Store_field(pair, 1, col_val);
+
+    value new_node = caml_alloc(2, 0);
+    Store_field(new_node, 0, pair);
+    Store_field(new_node, 1, row_list);
+    row_list = new_node;
+  }
+
+  value record_val = caml_alloc(1, DATUM_TAG_RECORD);
+  Store_field(record_val, 0, row_list);
+  CAMLreturn(record_val);
+}

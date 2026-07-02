@@ -21,6 +21,7 @@ REGRESS = \
 	plocaml_error \
 	plocaml_quote \
 	plocaml_record \
+	plocaml_trigger \
 	plocaml_drop
 REGRESS_OPTS = --load-extension=plocamlu
 

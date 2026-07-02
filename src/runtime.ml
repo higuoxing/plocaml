@@ -6,7 +6,11 @@ type execution_result =
   | RuntimeError of string
 
 let function_cache :
-    (int, Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.datum) Hashtbl.t =
+    ( int,
+      Bootstrap.PLOCaml.datum array ->
+      Bootstrap.PLOCaml.datum ->
+      Bootstrap.PLOCaml.datum )
+    Hashtbl.t =
   Hashtbl.create 16
 
 (* These C primitives are declared in Bootstrap.PLOCaml but only ever called by
@@ -169,7 +173,7 @@ let compile_function oid func_name arg_names code_str buf fmt =
          We wrap it to return PL.Null so the rest of the engine works normally.
          All DO blocks share the OID-0 SD table. *)
       Printf.sprintf
-        "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n\
+        "let _plocaml_fn_%d (args : PL.datum array) (td : PL.datum) : PL.datum =\n\
          let gd = PL.gd in let sd = PL.get_sd %d in ignore gd; ignore sd; %s\n\
          # 1 \"[PL/OCaml function %s]\"\n\
          %s;\n\
@@ -177,7 +181,7 @@ let compile_function oid func_name arg_names code_str buf fmt =
         oid oid params func_name code_str
     else
       Printf.sprintf
-        "let _plocaml_fn_%d (args : PL.datum array) : PL.datum =\n\
+        "let _plocaml_fn_%d (args : PL.datum array) (td : PL.datum) : PL.datum =\n\
          let gd = PL.gd in let sd = PL.get_sd %d in ignore gd; ignore sd; %s\n\
          # 1 \"[PL/OCaml function %s]\"\n\
          %s;;"
@@ -189,7 +193,10 @@ let compile_function oid func_name arg_names code_str buf fmt =
     if Toploop.execute_phrase true fmt phrase then (
       let val_name = Printf.sprintf "_plocaml_fn_%d" oid in
       let v = Toploop.getvalue val_name in
-      let f : Bootstrap.PLOCaml.datum array -> Bootstrap.PLOCaml.datum =
+      let f :
+          Bootstrap.PLOCaml.datum array ->
+          Bootstrap.PLOCaml.datum ->
+          Bootstrap.PLOCaml.datum =
         Obj.magic v
       in
       if oid <> 0 then Hashtbl.add function_cache oid f;
@@ -207,7 +214,7 @@ let compile_function oid func_name arg_names code_str buf fmt =
       let msg = if msg = "" then Printexc.to_string e else msg in
       Stdlib.Result.Error (RuntimeError msg)
 
-let execute_pl_code oid func_name code_str arg_names args =
+let execute_pl_code oid func_name code_str arg_names args td =
   let buf = Buffer.create 128 in
   let fmt = formatter_of_buffer buf in
   let func_opt =
@@ -220,7 +227,7 @@ let execute_pl_code oid func_name code_str arg_names args =
   match func_opt with
   | Stdlib.Result.Error e -> e
   | Stdlib.Result.Ok f -> (
-      try Ok (f args)
+      try Ok (f args td)
       with e ->
         RuntimeError ("Exception during execution: " ^ Printexc.to_string e))
 
