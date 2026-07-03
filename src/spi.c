@@ -2,12 +2,12 @@
 #include "plocaml.h"
 // clang-format on
 
+#include <access/xact.h>
 #include <caml/alloc.h>
 #include <caml/callback.h>
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
-#include <access/xact.h>
 #include <executor/spi.h>
 #include <parser/parse_type.h>
 #include <utils/builtins.h>
@@ -70,7 +70,8 @@ static void plocaml_subxact_begin(MemoryContext oldcontext) {
 
 /* Commit the current subtransaction. Called on the non-throwing path of an SPI
    call — including when the call returned an error *status* rather than raising
-   — since in that case the subtransaction did nothing that needs rolling back. */
+   — since in that case the subtransaction did nothing that needs rolling back.
+ */
 static void plocaml_subxact_commit(MemoryContext oldcontext,
                                    ResourceOwner oldowner) {
   ReleaseCurrentSubTransaction();
@@ -78,7 +79,8 @@ static void plocaml_subxact_commit(MemoryContext oldcontext,
   CurrentResourceOwner = oldowner;
 }
 
-/* Roll back the current subtransaction and restore the caller's context/owner. */
+/* Roll back the current subtransaction and restore the caller's context/owner.
+ */
 static void plocaml_subxact_rollback(MemoryContext oldcontext,
                                      ResourceOwner oldowner) {
   RollbackAndReleaseCurrentSubTransaction();
@@ -86,10 +88,10 @@ static void plocaml_subxact_rollback(MemoryContext oldcontext,
   CurrentResourceOwner = oldowner;
 }
 
-/* Abort the current subtransaction from within a PG_CATCH. Stashes the in-flight
-   error (so the call boundary can re-raise it with all fields) and returns its
-   message. Must copy/flush the error before rolling back, as the rollback tears
-   down the error context. */
+/* Abort the current subtransaction from within a PG_CATCH. Stashes the
+   in-flight error (so the call boundary can re-raise it with all fields) and
+   returns its message. Must copy/flush the error before rolling back, as the
+   rollback tears down the error context. */
 static const char *plocaml_subxact_abort(MemoryContext oldcontext,
                                          ResourceOwner oldowner) {
   const char *errmsg;
@@ -120,7 +122,8 @@ CAMLprim value plocaml_subtransaction(value thunk) {
 
   if (Is_exception_result(res)) {
     /* Extract before the rollback: nothing between here and caml_raise
-       allocates, so res never needs to survive a GC as a raw exception result. */
+       allocates, so res never needs to survive a GC as a raw exception result.
+     */
     res = Extract_exception(res);
     plocaml_subxact_rollback(oldcontext, oldowner);
     caml_raise(res);
