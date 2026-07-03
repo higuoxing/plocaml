@@ -72,6 +72,29 @@ const char *plocaml_stash_pending_error(void) {
   return edata->message;
 }
 
+/*
+ * Reconcile the stashed error against the OCaml exception now propagating out
+ * of the user function. plocaml_stash_pending_error records the rich ErrorData
+ * of every SPI/PL.error failure so the call boundary can re-throw it with all
+ * fields intact. But if user code CAUGHT that failure and later raised a
+ * different error, the stash is stale. [msg_opt] is the propagating exception's
+ * message when it is an OCaml [Failure msg] (None otherwise), since that is how
+ * every stashed error surfaces: if it does not match the stashed message, drop
+ * the stash so the boundary reports the current error instead.
+ */
+CAMLprim value plocaml_reconcile_pending_error(value msg_opt) {
+  CAMLparam1(msg_opt);
+  if (plocaml_pending_edata != NULL) {
+    const char *stashed = plocaml_pending_edata->message;
+    bool matches = Is_some(msg_opt) && stashed != NULL &&
+                   strcmp(stashed, String_val(Some_val(msg_opt))) == 0;
+    if (!matches) {
+      plocaml_pending_edata = NULL;
+    }
+  }
+  CAMLreturn(Val_unit);
+}
+
 /* Read a [string option] record field: None -> NULL, Some s -> s. */
 #define OPT_STR(info, i)                                                       \
   (Is_block(Field((info), (i))) ? String_val(Field(Field((info), (i)), 0))     \

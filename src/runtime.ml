@@ -214,6 +214,11 @@ let compile_function oid func_name arg_names code_str buf fmt =
       let msg = if msg = "" then Printexc.to_string e else msg in
       Stdlib.Result.Error (RuntimeError msg)
 
+(* Drop the stashed pending error unless the propagating exception is the
+   [Failure msg] that produced it. Defined in stub.c. *)
+external reconcile_pending_error : string option -> unit
+  = "plocaml_reconcile_pending_error"
+
 let execute_pl_code oid func_name code_str arg_names args td =
   let buf = Buffer.create 128 in
   let fmt = formatter_of_buffer buf in
@@ -229,6 +234,14 @@ let execute_pl_code oid func_name code_str arg_names args td =
   | Stdlib.Result.Ok f -> (
       try Ok (f args td)
       with e ->
+        (* A failed SPI call / PL.error stashes its rich ErrorData so the call
+           boundary can re-throw it with all fields intact. If user code caught
+           that failure and this is a different exception, that stash is stale;
+           reconcile it against the exception actually propagating out so the
+           boundary reports the right error. Every stashed error surfaces as
+           [Failure msg], so only a matching Failure keeps the stash. *)
+        reconcile_pending_error
+          (match e with Failure msg -> Some msg | _ -> None);
         RuntimeError ("Exception during execution: " ^ Printexc.to_string e))
 
 external postgres_magic_keepalive : unit -> unit = "plocaml_magic_keepalive"
