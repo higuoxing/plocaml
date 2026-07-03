@@ -145,6 +145,14 @@ module PLOCaml = struct
   external fetch : cursor -> int -> spi_result = "plocaml_spi_fetch"
   external close : cursor -> unit = "plocaml_spi_close"
 
+  (* Run [f] inside an explicit subtransaction, mirroring PL/Python's
+     [with plpy.subtransaction():]. If [f] returns normally the subtransaction
+     is committed; if it raises, the subtransaction is rolled back and the
+     exception re-raised. Combined with the implicit subtransaction wrapping
+     each SPI call, this lets user code catch a failed [execute] and keep the
+     surrounding transaction usable. *)
+  external subtransaction : (unit -> 'a) -> 'a = "plocaml_subtransaction"
+
   (* Structured error/notice report, mirroring PL/Python's plpy.error and
      friends. The optional fields map to the PostgreSQL error fields. For a
      level of [Error] (or higher) the report raises; lower levels emit a

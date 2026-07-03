@@ -27,6 +27,7 @@ let () =
   ignore cursor_plan;
   ignore fetch;
   ignore close;
+  ignore subtransaction;
   ignore _report;
   ignore quote_literal;
   ignore quote_nullable;

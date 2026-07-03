@@ -1,0 +1,297 @@
+--
+-- Mirror of PL/Python's plpython_subtransaction test, adapted for PL/OCaml.
+--
+-- PL/OCaml exposes explicit subtransactions as
+--   PL.subtransaction (fun () -> ...)
+-- which commits the subtransaction if the thunk returns normally and rolls it
+-- back (then re-raises) if the thunk raises. As in PL/Python, every SPI call
+-- (PL.execute, PL.prepare, PL.cursor, ...) also runs inside its own implicit
+-- subtransaction, so a caught error leaves the surrounding transaction usable
+-- instead of aborted.
+--
+-- Omitted (no PL/OCaml equivalent):
+--   * The __enter__/__exit__ context-manager protocol and its misuse cases
+--     (enter/exit without the other, twice, alternative names): the scope-based
+--     PL.subtransaction API cannot express them.
+--
+-- Test table to see if transactions get properly rolled back
+CREATE TABLE subtransaction_tbl (
+    i integer
+);
+-- Basic: the subtransaction commits normally, or rolls back on either an SPI
+-- error or an OCaml exception.
+CREATE FUNCTION subtransaction_ctx_test(what_error text = NULL) RETURNS text
+LANGUAGE plocamlu
+AS $$
+  let what_error = match args.(0) with PL.String s -> s | _ -> "" in
+  PL.subtransaction (fun () ->
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (2)");
+    if what_error = "SPI" then
+      ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES ('oops')")
+    else if what_error = "OCaml" then
+      failwith "OCaml exception");
+  PL.Null
+$$;
+SELECT subtransaction_ctx_test();
+ subtransaction_ctx_test 
+-------------------------
+ 
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+ 2
+(2 rows)
+
+TRUNCATE subtransaction_tbl;
+SELECT subtransaction_ctx_test('SPI');
+ERROR:  invalid input syntax for type integer: "oops"
+LINE 1: INSERT INTO subtransaction_tbl VALUES ('oops')
+                                               ^
+QUERY:  INSERT INTO subtransaction_tbl VALUES ('oops')
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+(0 rows)
+
+TRUNCATE subtransaction_tbl;
+SELECT subtransaction_ctx_test('OCaml');
+ERROR:  PL/OCaml execution failed
+DETAIL:  Exception during execution: Failure("OCaml exception")
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+(0 rows)
+
+TRUNCATE subtransaction_tbl;
+-- Nested subtransactions
+CREATE FUNCTION subtransaction_nested_test(swallow boolean = 'f') RETURNS text
+LANGUAGE plocamlu
+AS $$
+  let swallow = match args.(0) with PL.Bool b -> b | _ -> false in
+  ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+  PL.subtransaction (fun () ->
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (2)");
+    (try
+       PL.subtransaction (fun () ->
+         ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (3)");
+         ignore (PL.execute "error"))
+     with Failure msg ->
+       if not swallow then failwith msg
+       else PL.notice (Printf.sprintf "Swallowed Failure(%S)" msg)));
+  PL.String "ok"
+$$;
+SELECT subtransaction_nested_test();
+ERROR:  syntax error at or near "error"
+LINE 1: error
+        ^
+QUERY:  error
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+(0 rows)
+
+TRUNCATE subtransaction_tbl;
+SELECT subtransaction_nested_test('t');
+NOTICE:  Swallowed Failure("syntax error at or near \"error\"")
+ subtransaction_nested_test 
+----------------------------
+ ok
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+ 2
+(2 rows)
+
+TRUNCATE subtransaction_tbl;
+-- Nested subtransactions that recursively call code dealing with
+-- subtransactions
+CREATE FUNCTION subtransaction_deeply_nested_test() RETURNS text
+LANGUAGE plocamlu
+AS $$
+  ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+  PL.subtransaction (fun () ->
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (2)");
+    ignore (PL.execute "SELECT subtransaction_nested_test('t')"));
+  PL.String "ok"
+$$;
+SELECT subtransaction_deeply_nested_test();
+NOTICE:  Swallowed Failure("syntax error at or near \"error\"")
+ subtransaction_deeply_nested_test 
+-----------------------------------
+ ok
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+ 1
+ 2
+ 2
+(4 rows)
+
+TRUNCATE subtransaction_tbl;
+-- Mix explicit subtransactions and normal (implicit) SPI calls. The explicit
+-- block is all-or-nothing; the implicit block commits each statement that
+-- succeeds before the failing one.
+CREATE FUNCTION subtransaction_mix_explicit_and_implicit() RETURNS void
+LANGUAGE plocamlu
+AS $$
+  (try
+     PL.subtransaction (fun () ->
+       ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+       ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (2)");
+       ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES ('oops')"))
+   with Failure _ ->
+     PL.warning "Caught a SPI error from an explicit subtransaction");
+  (try
+     ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+     ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (2)");
+     ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES ('oops')")
+   with Failure _ -> PL.warning "Caught a SPI error");
+  PL.Null
+$$;
+SELECT subtransaction_mix_explicit_and_implicit();
+WARNING:  Caught a SPI error from an explicit subtransaction
+WARNING:  Caught a SPI error
+ subtransaction_mix_explicit_and_implicit 
+------------------------------------------
+ 
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+ 2
+(2 rows)
+
+TRUNCATE subtransaction_tbl;
+-- try/catch inside a subtransaction block: the caught SPI error is rolled back
+-- by its implicit subtransaction, and the enclosing explicit one survives.
+CREATE FUNCTION try_catch_inside_subtransaction() RETURNS void
+LANGUAGE plocamlu
+AS $$
+  PL.subtransaction (fun () ->
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+    (try ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES ('a')")
+     with Failure _ -> PL.notice "caught"));
+  PL.Null
+$$;
+SELECT try_catch_inside_subtransaction();
+NOTICE:  caught
+ try_catch_inside_subtransaction 
+---------------------------------
+ 
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+(1 row)
+
+TRUNCATE subtransaction_tbl;
+ALTER TABLE subtransaction_tbl ADD PRIMARY KEY (i);
+CREATE FUNCTION pk_violation_inside_subtransaction() RETURNS void
+LANGUAGE plocamlu
+AS $$
+  PL.subtransaction (fun () ->
+    ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)");
+    (try ignore (PL.execute "INSERT INTO subtransaction_tbl VALUES (1)")
+     with Failure _ -> PL.notice "caught"));
+  PL.Null
+$$;
+SELECT pk_violation_inside_subtransaction();
+NOTICE:  caught
+ pk_violation_inside_subtransaction 
+------------------------------------
+ 
+(1 row)
+
+SELECT * FROM subtransaction_tbl ORDER BY i;
+ i 
+---
+ 1
+(1 row)
+
+DROP TABLE subtransaction_tbl;
+-- cursor/subtransaction interaction: a cursor opened inside a committed
+-- subtransaction is still usable afterwards.
+CREATE FUNCTION cursor_in_subxact() RETURNS int
+LANGUAGE plocamlu
+AS $$
+  let cur = PL.subtransaction (fun () ->
+    let cur = PL.cursor "select * from generate_series(1, 20) as gen(i)" in
+    ignore (PL.fetch cur 10);
+    cur) in
+  let fetched = PL.fetch cur 10 in
+  match List.assoc_opt "i" fetched.rows.(5) with
+  | Some (PL.Int n) -> PL.Int n
+  | _ -> PL.Null
+$$;
+SELECT cursor_in_subxact();
+ cursor_in_subxact 
+-------------------
+                16
+(1 row)
+
+-- A cursor opened inside a subtransaction that then aborts is invalidated;
+-- fetching from it afterwards raises a clean error rather than crashing.
+CREATE FUNCTION cursor_aborted_subxact() RETURNS int
+LANGUAGE plocamlu
+AS $$
+  let cur = ref None in
+  (try
+     PL.subtransaction (fun () ->
+       cur := Some (PL.cursor "select * from generate_series(1, 20) as gen(i)");
+       ignore (PL.fetch (Option.get !cur) 10);
+       ignore (PL.execute "select no_such_function()"))
+   with Failure _ ->
+     let fetched = PL.fetch (Option.get !cur) 10 in
+     ignore fetched);
+  PL.Int 0 (* not reached *)
+$$;
+CREATE FUNCTION cursor_plan_aborted_subxact() RETURNS int
+LANGUAGE plocamlu
+AS $$
+  let cur = ref None in
+  (try
+     PL.subtransaction (fun () ->
+       ignore (PL.execute "create temporary table tmp(i) as select generate_series(1, 10)");
+       let plan = PL.prepare "select i from tmp" [||] in
+       cur := Some (PL.cursor_plan plan [||]);
+       ignore (PL.execute "select no_such_function()"))
+   with Failure _ ->
+     let fetched = PL.fetch (Option.get !cur) 5 in
+     ignore fetched);
+  PL.Int 0 (* not reached *)
+$$;
+CREATE FUNCTION cursor_close_aborted_subxact() RETURNS bool
+LANGUAGE plocamlu
+AS $$
+  let cur = ref None in
+  (try
+     PL.subtransaction (fun () ->
+       cur := Some (PL.cursor "select 1");
+       ignore (PL.execute "select no_such_function()"))
+   with Failure _ ->
+     PL.close (Option.get !cur));
+  PL.Bool false (* not reached *)
+$$;
+SELECT cursor_aborted_subxact();
+ERROR:  PL/OCaml execution failed
+DETAIL:  Exception during execution: Failure("PL/OCaml: iterating a cursor in an aborted subtransaction")
+SELECT cursor_plan_aborted_subxact();
+ERROR:  PL/OCaml execution failed
+DETAIL:  Exception during execution: Failure("PL/OCaml: iterating a cursor in an aborted subtransaction")
+SELECT cursor_close_aborted_subxact();
+ERROR:  PL/OCaml execution failed
+DETAIL:  Exception during execution: Failure("PL/OCaml: closing a cursor in an aborted subtransaction")

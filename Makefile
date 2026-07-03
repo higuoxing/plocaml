@@ -22,6 +22,7 @@ REGRESS = \
 	plocaml_quote \
 	plocaml_record \
 	plocaml_trigger \
+	plocaml_subtransaction \
 	plocaml_drop
 REGRESS_OPTS = --load-extension=plocamlu
 
