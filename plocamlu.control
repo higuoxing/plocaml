@@ -1,5 +1,0 @@
-# plocamlu extension
-comment = 'PL/OCaml untrusted procedural language'
-default_version = '1.0'
-module_pathname = '$libdir/plocamlu'
-relocatable = false
