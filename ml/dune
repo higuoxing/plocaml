@@ -1,0 +1,5 @@
+(rule
+ (targets bootstrap.c)
+ (deps bootstrap.ml)
+ (action
+  (run ocamlc -output-complete-obj -o %{targets} %{deps})))

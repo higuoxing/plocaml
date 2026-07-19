@@ -1,5 +1,8 @@
 compile_commands.json
 
+# Source codes for reference.
+.resources/
+
 # Object files
 *.o
 *.dylib
@@ -8,6 +11,15 @@ compile_commands.json
 # tests
 *.diffs
 results/
+tests/pg_regress/results
+tests/pg_regress/regression.diffs
+tests/pg_regress/regression.out
 
 # Build directory
 _build/
+.DS_Store
+.idea/
+/target
+*.iml
+**/*.rs.bk
+Cargo.lock

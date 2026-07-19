@@ -1,0 +1,6 @@
+comment = 'plocamlu:  Created by pgrx'
+default_version = '@CARGO_VERSION@'
+module_pathname = 'plocamlu'
+relocatable = false
+superuser = true
+trusted = false
