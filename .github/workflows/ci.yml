@@ -2,96 +2,46 @@ name: CI
 
 on:
   push:
+    branches: [rs]
   pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [rs]
 
 jobs:
   test:
-    name: PostgreSQL ${{ matrix.postgres }}
-    runs-on: ubuntu-24.04
-
+    name: Test with PostgreSQL (${{ matrix.pg_version }})
     strategy:
       fail-fast: false
       matrix:
-        postgres: [16, 17, 18]
-
-    env:
-      PG_CONFIG: /usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config
-      # Talk to our throwaway cluster over a unix socket in /tmp.
-      PGHOST: /tmp
-      PGPORT: "5432"
-      DEBIAN_FRONTEND: noninteractive
-
+        pg_version: [13, 14, 15, 16, 17, 18]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install GCC 15 (the C stubs use the C23 #embed directive)
+      - name: Install PostgreSQL build dependencies
         run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y gcc-15
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-15 100
-          sudo update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-15 100
-          gcc --version
+          sudo apt-get install -y build-essential libreadline-dev zlib1g-dev flex bison \
+            libxml2-dev libxslt-dev libssl-dev libxml2-utils xsltproc ccache pkg-config
 
-      - name: Install PostgreSQL ${{ matrix.postgres }}
-        run: |
-          sudo apt-get install -y postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y \
-            "postgresql-${{ matrix.postgres }}" \
-            "postgresql-server-dev-${{ matrix.postgres }}"
-          # The package auto-creates and starts a cluster on port 5432; drop it
-          # so it doesn't collide with the throwaway cluster we start below.
-          sudo pg_dropcluster --stop "${{ matrix.postgres }}" main || true
-
-      - name: Set up OCaml
+      - name: Setup OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.4"
+          ocaml-compiler: "5"
+          dune-cache: false
 
       - name: Install dune
-        run: opam install -y dune
-
-      # with_llvm=no: the PGDG packages are built with JIT enabled, which makes
-      # PGXS demand an LLVM bitcode file per module. PL/OCaml is an OCaml shared
-      # object, not JIT-inlinable C, so we skip bitcode generation entirely.
-      - name: Build
-        run: opam exec -- make PG_CONFIG="$PG_CONFIG" with_llvm=no
-
-      - name: Install extension
-        # plocamlu.so is already up to date from the build step, so this only
-        # copies files into the (root-owned) PostgreSQL install dirs.
-        run: sudo make install PG_CONFIG="$PG_CONFIG" with_llvm=no
-
-      - name: Start PostgreSQL
         run: |
-          export PATH="/usr/lib/postgresql/${{ matrix.postgres }}/bin:$PATH"
-          initdb -D "$RUNNER_TEMP/pgdata" -A trust
-          pg_ctl -D "$RUNNER_TEMP/pgdata" -l "$RUNNER_TEMP/pg.log" \
-            -o "-p $PGPORT -k /tmp -c listen_addresses=''" -w start
+          opam install -y dune
+          echo "$(opam var bin)" >> "$GITHUB_PATH"
 
-      - name: Run regression tests
+      - name: Install cargo-pgrx
         run: |
-          if ! opam exec -- make installcheck PG_CONFIG="$PG_CONFIG" with_llvm=no; then
-            echo '===== regression.diffs ====='
-            cat regression.diffs 2>/dev/null || echo '(none)'
-            exit 1
-          fi
+          cargo install cargo-pgrx --version 0.19.1 --locked
 
-      - name: Show PostgreSQL log on failure
-        if: failure()
-        run: cat "$RUNNER_TEMP/pg.log" 2>/dev/null || echo '(none)'
+      - name: Initialize pgrx for PostgreSQL ${{ matrix.pg_version }}
+        run: |
+          cargo pgrx init --pg${{ matrix.pg_version }} download
 
-      - name: Upload regression artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: regression-pg${{ matrix.postgres }}
-          path: |
-            regression.diffs
-            results/
-          if-no-files-found: ignore
+      - name: Run tests
+        run: |
+          cargo pgrx test --no-default-features --features pg${{ matrix.pg_version }} pg_test
