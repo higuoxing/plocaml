@@ -1,6 +1,9 @@
 use pgrx::prelude::*;
 
 mod fixme;
+mod plocaml_call_handler;
+mod plocaml_inline_handler;
+mod plocaml_validator;
 
 ::pgrx::pg_module_magic!(name, version);
 
@@ -13,27 +16,6 @@ extension_sql_file!(
 #[pg_guard]
 pub extern "C-unwind" fn _PG_init() {
     ocaml::runtime::init_persistent();
-}
-
-#[pg_extern]
-fn plocaml_validator(_oid: pg_sys::Oid) {
-    todo!()
-}
-
-pg_finfo_v1!(pg_finfo_plocaml_call_handler);
-#[no_mangle]
-#[pg_guard]
-pub extern "C-unwind" fn plocaml_call_handler(_fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
-    todo!()
-}
-
-pg_finfo_v1!(pg_finfo_plocaml_inline_handler);
-#[no_mangle]
-#[pg_guard]
-pub extern "C-unwind" fn plocaml_inline_handler(
-    _fcinfo: pg_sys::FunctionCallInfo,
-) -> pg_sys::Datum {
-    todo!()
 }
 
 #[cfg(any(test, feature = "pg_test"))]
