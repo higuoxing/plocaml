@@ -1,6 +1,5 @@
 (rule
  (targets bootstrap.c)
- (deps bootstrap.ml)
+ (deps runtime.ml)
  (action
   (run ocamlc -I +compiler-libs ocamlcommon.cma ocamlbytecomp.cma ocamltoplevel.cma -output-complete-obj -o %{targets} %{deps})))
-

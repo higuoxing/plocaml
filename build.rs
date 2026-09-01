@@ -25,6 +25,7 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
 
     // Locate OCaml headers and libraries
+    println!("cargo:rerun-if-changed=ml");
     let ocaml_where = String::from_utf8(
         Command::new("ocamlc")
             .arg("-where")
