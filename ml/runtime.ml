@@ -75,6 +75,60 @@ let init_toplevel (bootstrap_code : string) =
 
 let execute_inline (source_text : string) : unit = execute_phrases source_text
 
+let is_ocaml_keyword = function
+  | "and" | "as" | "assert" | "asr" | "begin" | "class" | "constraint" | "do"
+  | "done" | "downto" | "else" | "end" | "exception" | "external" | "false"
+  | "for" | "fun" | "function" | "functor" | "if" | "in" | "include" | "inherit"
+  | "initializer" | "land" | "lazy" | "let" | "lor" | "lsl" | "lsr" | "lxor"
+  | "match" | "method" | "mod" | "module" | "mutable" | "new" | "nonrec"
+  | "object" | "of" | "open" | "or" | "private" | "rec" | "sig" | "struct"
+  | "then" | "to" | "true" | "try" | "type" | "val" | "virtual" | "when"
+  | "while" | "with" ->
+      true
+  | _ -> false
+
+let is_valid_ident s =
+  let len = String.length s in
+  if len = 0 then false
+  else
+    let first = s.[0] in
+    let valid_first = (first >= 'a' && first <= 'z') || first = '_' in
+    if not valid_first then false
+    else if is_ocaml_keyword s then false
+    else
+      let rec check i =
+        if i >= len then true
+        else
+          let c = s.[i] in
+          let valid_char =
+            (c >= 'a' && c <= 'z')
+            || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9')
+            || c = '_' || c = '\''
+          in
+          if valid_char then check (i + 1) else false
+      in
+      check 1
+
+let execute_function (prosrc : string) (arg_names : string array) : unit =
+  let nargs = Array.length arg_names in
+  let buf = Buffer.create 256 in
+  Buffer.add_string buf "let () =\n";
+  Buffer.add_string buf "  let args = Plocaml.Internal.get_args () in\n";
+  for i = 0 to nargs - 1 do
+    let arg_idx = string_of_int i in
+    Buffer.add_string buf
+      ("  let arg" ^ string_of_int (i + 1) ^ " = args.(" ^ arg_idx ^ ") in\n");
+    let name = arg_names.(i) in
+    if is_valid_ident name && name <> "arg" ^ string_of_int (i + 1) then
+      Buffer.add_string buf ("  let " ^ name ^ " = args.(" ^ arg_idx ^ ") in\n")
+  done;
+  Buffer.add_string buf "  Plocaml.Internal.set_result (Obj.repr (begin\n";
+  Buffer.add_string buf prosrc;
+  Buffer.add_string buf "\n  end))\n";
+  execute_phrases (Buffer.contents buf)
+
 let () =
   Callback.register "plocaml_init_toplevel" init_toplevel;
-  Callback.register "plocaml_execute" execute_inline
+  Callback.register "plocaml_execute" execute_inline;
+  Callback.register "plocaml_call_function" execute_function

@@ -556,6 +556,283 @@ mod tests {
         )
         .expect("DO block failed");
     }
+
+    #[pg_test]
+    fn test_call_handler_scalar_int() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_add_fn(a int, b int) RETURNS int LANGUAGE plocamlu AS $$
+                match a, b with
+                | PL.Int x, PL.Int y -> x + y
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let sum = Spi::get_one::<i32>("SELECT test_add_fn(18, 24);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(sum, 42);
+    }
+
+    #[pg_test]
+    fn test_call_handler_scalar_text() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_concat_fn(s1 text, s2 text) RETURNS text LANGUAGE plocamlu AS $$
+                match s1, s2 with
+                | PL.String a, PL.String b -> a ^ " " ^ b
+                | _ -> ""
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<String>("SELECT test_concat_fn('hello', 'world');")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, "hello world");
+    }
+
+    #[pg_test]
+    fn test_call_handler_scalar_bool() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_is_even_fn(n int) RETURNS bool LANGUAGE plocamlu AS $$
+                match n with
+                | PL.Int x -> x mod 2 = 0
+                | _ -> false
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let is_even_4 = Spi::get_one::<bool>("SELECT test_is_even_fn(4);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert!(is_even_4);
+
+        let is_even_5 = Spi::get_one::<bool>("SELECT test_is_even_fn(5);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert!(!is_even_5);
+    }
+
+    #[pg_test]
+    fn test_call_handler_scalar_float8() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_multiply_floats(a float8, b float8) RETURNS float8 LANGUAGE plocamlu AS $$
+                match a, b with
+                | PL.Float x, PL.Float y -> x *. y
+                | _ -> 0.0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let product = Spi::get_one::<f64>("SELECT test_multiply_floats(2.5, 4.0);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert!((product - 10.0).abs() < 1e-9);
+    }
+
+    #[pg_test]
+    fn test_call_handler_returning_datum() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_ret_datum(n int) RETURNS int LANGUAGE plocamlu AS $$
+                match n with
+                | PL.Int x -> PL.Int (x * 10)
+                | _ -> PL.Null
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_ret_datum(7);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 70);
+    }
+
+    #[pg_test]
+    fn test_call_handler_no_args() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_const_answer() RETURNS int LANGUAGE plocamlu AS $$
+                42
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_const_answer();")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 42);
+    }
+
+    #[pg_test]
+    fn test_call_handler_unnamed_args() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_unnamed_args(int, int) RETURNS int LANGUAGE plocamlu AS $$
+                match arg1, arg2 with
+                | PL.Int x, PL.Int y -> x * y
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_unnamed_args(6, 7);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 42);
+    }
+
+    #[pg_test]
+    fn test_call_handler_spi_query() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_fn_query(n int) RETURNS int LANGUAGE plocamlu AS $$
+                let res = PL.execute (Printf.sprintf "SELECT %d * 3 AS res" (match n with PL.Int x -> x | _ -> 0)) in
+                match res.rows.(0) with
+                | [("res", PL.Int v)] -> v
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_fn_query(5);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 15);
+    }
+
+    #[pg_test]
+    fn test_call_handler_spi_plan() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_fn_plan(factor int) RETURNS int LANGUAGE plocamlu AS $$
+                let plan = PL.prepare "SELECT $1::int * 4 AS val" [|"int4"|] in
+                let res = PL.execute_plan plan [|factor|] in
+                match res.rows.(0) with
+                | [("val", PL.Int n)] -> n
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_fn_plan(10);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 40);
+    }
+
+    #[pg_test]
+    fn test_call_handler_procedure() {
+        Spi::run(
+            r#"
+            CREATE TABLE test_proc_tbl (id int);
+
+            CREATE PROCEDURE test_insert_proc(v int) LANGUAGE plocamlu AS $$
+                match v with
+                | PL.Int n ->
+                    let q = Printf.sprintf "INSERT INTO test_proc_tbl VALUES (%d)" n in
+                    ignore (PL.execute q)
+                | _ -> ()
+            $$;
+
+            CALL test_insert_proc(99);
+            "#,
+        )
+        .expect("procedure test failed");
+
+        let count = Spi::get_one::<i64>("SELECT count(*) FROM test_proc_tbl WHERE id = 99;")
+            .expect("SELECT failed")
+            .expect("count is null");
+        assert_eq!(count, 1);
+    }
+
+    #[pg_test]
+    fn test_call_handler_null_input_and_output() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_null_fn(s text) RETURNS text LANGUAGE plocamlu AS $$
+                match s with
+                | PL.Null -> PL.String "was null"
+                | PL.String "make_null" -> PL.Null
+                | PL.String str -> PL.String ("not null: " ^ str)
+                | _ -> PL.Null
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res_from_null = Spi::get_one::<String>("SELECT test_null_fn(NULL);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res_from_null, "was null");
+
+        let res_to_null =
+            Spi::get_one::<String>("SELECT test_null_fn('make_null');").expect("SELECT failed");
+        assert_eq!(res_to_null, None);
+
+        let res_regular = Spi::get_one::<String>("SELECT test_null_fn('hello');")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res_regular, "not null: hello");
+    }
+
+    #[pg_test]
+    fn test_call_handler_multiple_invocations() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_fib(n int) RETURNS int LANGUAGE plocamlu AS $$
+                let rec fib = function
+                  | 0 -> 0
+                  | 1 -> 1
+                  | n -> fib (n - 1) + fib (n - 2)
+                in
+                match n with
+                | PL.Int x -> fib x
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let res = Spi::get_one::<i32>("SELECT test_fib(10);")
+            .expect("SELECT failed")
+            .expect("result is null");
+        assert_eq!(res, 55);
+
+        let res_table =
+            Spi::get_one::<i32>("SELECT sum(test_fib(i))::int FROM generate_series(0, 6) AS i;")
+                .expect("SELECT failed")
+                .expect("result is null");
+        // fib(0..6) = 0 + 1 + 1 + 2 + 3 + 5 + 8 = 20
+        assert_eq!(res_table, 20);
+    }
+
+    #[pg_test(error = "PL/OCaml execution failed")]
+    fn test_call_handler_error_fails() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_failing_fn() RETURNS int LANGUAGE plocamlu AS $$
+                failwith "intentional function error"
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        Spi::get_one::<i32>("SELECT test_failing_fn();").expect("SELECT failed");
+    }
 }
 
 #[cfg(test)]
