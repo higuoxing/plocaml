@@ -4,6 +4,7 @@ mod call_handler;
 mod error;
 mod fixme;
 mod inline_handler;
+mod log;
 mod spi;
 mod subtransaction;
 mod typeio;
@@ -337,6 +338,62 @@ mod tests {
         )
         .expect("DO block failed");
     }
+
+    #[pg_test]
+    fn test_log_notice_and_warning_and_info() {
+        Spi::run(
+            r#"DO $$
+            PL.Log.notice "This is a notice message";
+            PL.Log.warning "This is a warning message";
+            PL.Log.info "This is an info message";
+            PL.Log.debug "This is a debug message";
+            PL.Log.log "This is a log message";
+            PL.Log.elog PL.Notice "This is an elog notice"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_log_report_with_optional_fields() {
+        Spi::run(
+            r#"DO $$
+            PL.Log.report PL.Notice
+              ~detail:"Detailed explanation"
+              ~hint:"Try doing this instead"
+              ~sqlstate:"01000"
+              ~schema_name:"public"
+              ~table_name:"my_table"
+              ~column_name:"my_col"
+              ~datatype_name:"text"
+              ~constraint_name:"my_check"
+              "Notice with all diagnostic fields"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test(error = "PL/OCaml execution failed")]
+    fn test_log_error_uncaught_fails() {
+        Spi::run(
+            r#"DO $$
+            PL.Log.error ~detail:"Error details" ~hint:"Error hint" "Fatal custom error"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_log_error_catchable() {
+        Spi::run(
+            r#"DO $$
+            try
+              PL.Log.error "Caught error"
+            with Failure _ -> ()
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
 }
 
 #[cfg(test)]
@@ -502,6 +559,144 @@ mod host_tests {
             .expect("query failed");
         let count: i32 = rows[0].get(0);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_client_log_and_notice() {
+        pgrx_tests::run_test("test_extension_loads", None, vec![])
+            .expect("failed to run test setup");
+
+        let (mut base_client, _) = pgrx_tests::client().expect("failed to connect client");
+        let row = base_client
+            .query_one(
+                "SELECT inet_server_port() AS port, current_user AS usr, current_database() AS db",
+                &[],
+            )
+            .expect("query port failed");
+        let port: i32 = row.get("port");
+        let user: String = row.get("usr");
+        let db: String = row.get("db");
+        drop(base_client);
+
+        let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notices_clone = notices.clone();
+
+        let mut client = postgres::Config::new()
+            .host("127.0.0.1")
+            .port(port as u16)
+            .user(&user)
+            .dbname(&db)
+            .notice_callback(move |err| {
+                notices_clone.lock().unwrap().push(err);
+            })
+            .connect(postgres::NoTls)
+            .expect("failed to connect with notice_callback");
+
+        client
+            .simple_query("SET client_min_messages TO 'NOTICE';")
+            .expect("set client_min_messages failed");
+
+        client
+            .simple_query(
+                r#"
+                DO $$
+                PL.Log.notice "Client notice from PL/OCaml";
+                PL.Log.warning "Client warning from PL/OCaml";
+                PL.Log.info "Client info from PL/OCaml"
+                $$ LANGUAGE plocamlu;
+                "#,
+            )
+            .expect("DO block with log statements failed");
+
+        let captured = notices.lock().unwrap();
+        let notice_obj = captured
+            .iter()
+            .find(|n| n.message() == "Client notice from PL/OCaml")
+            .expect("missing notice");
+        assert_eq!(notice_obj.severity(), "NOTICE");
+
+        let warning_obj = captured
+            .iter()
+            .find(|n| n.message() == "Client warning from PL/OCaml")
+            .expect("missing warning");
+        assert_eq!(warning_obj.severity(), "WARNING");
+
+        let info_obj = captured
+            .iter()
+            .find(|n| n.message() == "Client info from PL/OCaml")
+            .expect("missing info");
+        assert_eq!(info_obj.severity(), "INFO");
+    }
+
+    #[test]
+    fn test_client_log_diagnostics() {
+        pgrx_tests::run_test("test_extension_loads", None, vec![])
+            .expect("failed to run test setup");
+
+        let (mut base_client, _) = pgrx_tests::client().expect("failed to connect client");
+        let row = base_client
+            .query_one(
+                "SELECT inet_server_port() AS port, current_user AS usr, current_database() AS db",
+                &[],
+            )
+            .expect("query port failed");
+        let port: i32 = row.get("port");
+        let user: String = row.get("usr");
+        let db: String = row.get("db");
+        drop(base_client);
+
+        let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notices_clone = notices.clone();
+
+        let mut client = postgres::Config::new()
+            .host("127.0.0.1")
+            .port(port as u16)
+            .user(&user)
+            .dbname(&db)
+            .notice_callback(move |err| {
+                notices_clone.lock().unwrap().push(err);
+            })
+            .connect(postgres::NoTls)
+            .expect("failed to connect with notice_callback");
+
+        client
+            .simple_query("SET client_min_messages TO 'NOTICE';")
+            .expect("set client_min_messages failed");
+
+        client
+            .simple_query(
+                r#"
+                DO $$
+                PL.Log.report PL.Notice
+                  ~detail:"Detailed explanation"
+                  ~hint:"Try doing this instead"
+                  ~sqlstate:"01000"
+                  ~schema_name:"public"
+                  ~table_name:"my_table"
+                  ~column_name:"my_col"
+                  ~datatype_name:"text"
+                  ~constraint_name:"my_check"
+                  "Notice with diagnostic fields"
+                $$ LANGUAGE plocamlu;
+                "#,
+            )
+            .expect("DO block with diagnostic log report failed");
+
+        let captured = notices.lock().unwrap();
+        let notice = captured
+            .iter()
+            .find(|n| n.message() == "Notice with diagnostic fields")
+            .expect("missing notice with diagnostic fields");
+
+        assert_eq!(notice.severity(), "NOTICE");
+        assert_eq!(notice.detail(), Some("Detailed explanation"));
+        assert_eq!(notice.hint(), Some("Try doing this instead"));
+        assert_eq!(notice.code().code(), "01000");
+        assert_eq!(notice.schema(), Some("public"));
+        assert_eq!(notice.table(), Some("my_table"));
+        assert_eq!(notice.column(), Some("my_col"));
+        assert_eq!(notice.datatype(), Some("text"));
+        assert_eq!(notice.constraint(), Some("my_check"));
     }
 }
 

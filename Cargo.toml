@@ -15,12 +15,16 @@ pg16 = ["pgrx/pg16", "pgrx-tests/pg16" ]
 pg17 = ["pgrx/pg17", "pgrx-tests/pg17" ]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18" ]
 pg19 = ["pgrx/pg19", "pgrx-tests/pg19" ]
-pg_test = ["dep:pgrx-tests"]
+pg_test = ["dep:pgrx-tests", "dep:postgres"]
 pg_bench = ["dep:pgrx-bench"]
 
 [dependencies]
 pgrx = "=0.19.1"
 ocaml = "1"
+
+[dependencies.postgres]
+version = "0.19"
+optional = true
 
 [dependencies.pgrx-tests]
 version = "=0.19.1"

@@ -62,18 +62,23 @@ module Plocaml = struct
 
   (* Logging and Error Reporting *)
   module Log = struct
-    let report (_level : log_level) ?detail ?hint ?sqlstate ?schema_name
+    external elog_record : log_level -> error_info -> unit = "plocaml_elog"
+
+    let report (level : log_level) ?detail ?hint ?sqlstate ?schema_name
         ?table_name ?column_name ?datatype_name ?constraint_name
-        (_message : string) : unit =
-      ignore detail;
-      ignore hint;
-      ignore sqlstate;
-      ignore schema_name;
-      ignore table_name;
-      ignore column_name;
-      ignore datatype_name;
-      ignore constraint_name;
-      failwith "not implemented"
+        (message : string) : unit =
+      elog_record level
+        {
+          e_message = message;
+          e_detail = detail;
+          e_hint = hint;
+          e_sqlstate = sqlstate;
+          e_schema_name = schema_name;
+          e_table_name = table_name;
+          e_column_name = column_name;
+          e_datatype_name = datatype_name;
+          e_constraint_name = constraint_name;
+        }
 
     let debug ?detail ?hint ?sqlstate ?schema_name ?table_name ?column_name
         ?datatype_name ?constraint_name message =
