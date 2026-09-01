@@ -52,8 +52,8 @@ pub extern "C-unwind" fn plocaml_inline_handler(fcinfo: pg_sys::FunctionCallInfo
     if let Some(execute_fn) = unsafe { ocaml::Value::named("plocaml_execute") } {
         let source_val = unsafe { ocaml::Value::string(source_text) };
         unsafe {
-            if let Err(err_msg) = crate::plocaml_error::call_exn(execute_fn, &[source_val]) {
-                crate::plocaml_error::raise_ocaml_error(err_msg);
+            if let Err(err_msg) = crate::error::call_exn(execute_fn, &[source_val]) {
+                crate::error::raise_ocaml_error(err_msg);
             }
         }
     }

@@ -1,20 +1,20 @@
 use pgrx::prelude::*;
 
+mod call_handler;
+mod error;
 mod fixme;
-mod plocaml_call_handler;
-mod plocaml_error;
-mod plocaml_inline_handler;
-mod plocaml_spi;
-mod plocaml_subtransaction;
-mod plocaml_typeio;
-mod plocaml_validator;
+mod inline_handler;
+mod spi;
+mod subtransaction;
+mod typeio;
+mod validator;
 
 ::pgrx::pg_module_magic!(name, version);
 
 extension_sql_file!(
     "sql/plocamlu.sql",
     name = "plocamlu",
-    requires = [plocaml_validator]
+    requires = [validator::plocaml_validator]
 );
 
 const BOOTSTRAP_CODE: &str = include_str!("../ml/bootstrap.ml");
@@ -25,7 +25,7 @@ pub extern "C-unwind" fn _PG_init() {
     if let Some(init_fn) = unsafe { ocaml::Value::named("plocaml_init_toplevel") } {
         let code_val = unsafe { ocaml::Value::string(BOOTSTRAP_CODE) };
         unsafe {
-            if let Err(err_msg) = crate::plocaml_error::call_exn(init_fn, &[code_val]) {
+            if let Err(err_msg) = crate::error::call_exn(init_fn, &[code_val]) {
                 pgrx::error!("failed to initialize PL/OCaml toplevel: {err_msg}");
             }
         }

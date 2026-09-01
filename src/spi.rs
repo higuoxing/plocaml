@@ -11,7 +11,7 @@ pub(crate) unsafe fn build_spi_result(status: i32, nrows: usize) -> ocaml::Value
 
         for i in 0..nrows {
             let tuple = *vals.add(i);
-            let row_list = crate::plocaml_typeio::heap_tuple_to_row_list(tuple, tupdesc);
+            let row_list = crate::typeio::heap_tuple_to_row_list(tuple, tupdesc);
             *ocaml::sys::field(arr_val.raw().0, i) = row_list.raw().0;
         }
         arr_val
