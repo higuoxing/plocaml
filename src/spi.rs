@@ -156,6 +156,9 @@ pub unsafe extern "C" fn plocaml_spi_prepare(
 
             let mut type_id = pg_sys::InvalidOid;
             let mut typmod = -1;
+            #[cfg(any(feature = "pg13", feature = "pg14", feature = "pg15"))]
+            pg_sys::parseTypeString(cs.as_ptr(), &mut type_id, &mut typmod, false);
+            #[cfg(not(any(feature = "pg13", feature = "pg14", feature = "pg15")))]
             pg_sys::parseTypeString(cs.as_ptr(), &mut type_id, &mut typmod, std::ptr::null_mut());
             type_oids.push(type_id);
         }

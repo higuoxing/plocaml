@@ -71,13 +71,13 @@ pub(crate) unsafe fn make_ocaml_datum(
     }
 
     if type_oid == pg_sys::INT2OID {
-        let i = pg_sys::DatumGetInt16(val) as isize;
+        let i = (val.value() as i16) as isize;
         make_ocaml_int(i)
     } else if type_oid == pg_sys::INT4OID {
-        let i = pg_sys::DatumGetInt32(val) as isize;
+        let i = (val.value() as i32) as isize;
         make_ocaml_int(i)
     } else if type_oid == pg_sys::INT8OID {
-        let i = pg_sys::DatumGetInt64(val) as isize;
+        let i = (val.value() as i64) as isize;
         make_ocaml_int(i)
     } else if type_oid == pg_sys::FLOAT4OID {
         let f = pg_sys::DatumGetFloat4(val) as f64;
@@ -86,7 +86,7 @@ pub(crate) unsafe fn make_ocaml_datum(
         let f = pg_sys::DatumGetFloat8(val);
         make_ocaml_float(f)
     } else if type_oid == pg_sys::BOOLOID {
-        let b = pg_sys::DatumGetBool(val);
+        let b = val.value() != 0;
         make_ocaml_bool(b)
     } else if pg_sys::type_is_rowtype(type_oid) {
         composite_to_ocaml_datum(val)
@@ -176,17 +176,17 @@ pub(crate) unsafe fn ocaml_datum_to_pg_datum(
         DATUM_TAG_INT => {
             let n = ocaml::sys::int_val(*ocaml::sys::field(val, 0));
             if type_oid == pg_sys::INT2OID {
-                pg_sys::Int16GetDatum(n as i16)
+                pg_sys::Datum::from(n as i16)
             } else if type_oid == pg_sys::INT4OID {
-                pg_sys::Int32GetDatum(n as i32)
+                pg_sys::Datum::from(n as i32)
             } else if type_oid == pg_sys::INT8OID {
-                pg_sys::Int64GetDatum(n as i64)
+                pg_sys::Datum::from(n as i64)
             } else if type_oid == pg_sys::FLOAT4OID {
                 pg_sys::Float4GetDatum(n as f32)
             } else if type_oid == pg_sys::FLOAT8OID {
                 pg_sys::Float8GetDatum(n as f64)
             } else if type_oid == pg_sys::BOOLOID {
-                pg_sys::BoolGetDatum(n != 0)
+                pg_sys::Datum::from(n != 0)
             } else {
                 string_to_pg_datum(&n.to_string(), type_oid)?
             }
@@ -198,11 +198,11 @@ pub(crate) unsafe fn ocaml_datum_to_pg_datum(
             } else if type_oid == pg_sys::FLOAT8OID {
                 pg_sys::Float8GetDatum(f)
             } else if type_oid == pg_sys::INT2OID {
-                pg_sys::Int16GetDatum(f as i16)
+                pg_sys::Datum::from(f as i16)
             } else if type_oid == pg_sys::INT4OID {
-                pg_sys::Int32GetDatum(f as i32)
+                pg_sys::Datum::from(f as i32)
             } else if type_oid == pg_sys::INT8OID {
-                pg_sys::Int64GetDatum(f as i64)
+                pg_sys::Datum::from(f as i64)
             } else {
                 string_to_pg_datum(&f.to_string(), type_oid)?
             }
@@ -215,9 +215,9 @@ pub(crate) unsafe fn ocaml_datum_to_pg_datum(
         DATUM_TAG_BOOL => {
             let b = ocaml::sys::int_val(*ocaml::sys::field(val, 0)) != 0;
             if type_oid == pg_sys::BOOLOID {
-                pg_sys::BoolGetDatum(b)
+                pg_sys::Datum::from(b)
             } else if type_oid == pg_sys::INT4OID {
-                pg_sys::Int32GetDatum(if b { 1 } else { 0 })
+                pg_sys::Datum::from(if b { 1i32 } else { 0i32 })
             } else {
                 string_to_pg_datum(if b { "true" } else { "false" }, type_oid)?
             }
@@ -241,13 +241,13 @@ pub(crate) unsafe fn ocaml_value_to_pg_datum(
     if ocaml::sys::is_long(val) {
         let n = ocaml::sys::int_val(val);
         if type_oid == pg_sys::BOOLOID {
-            return Ok((pg_sys::BoolGetDatum(n != 0), false));
+            return Ok((pg_sys::Datum::from(n != 0), false));
         } else if type_oid == pg_sys::INT2OID {
-            return Ok((pg_sys::Int16GetDatum(n as i16), false));
+            return Ok((pg_sys::Datum::from(n as i16), false));
         } else if type_oid == pg_sys::INT4OID {
-            return Ok((pg_sys::Int32GetDatum(n as i32), false));
+            return Ok((pg_sys::Datum::from(n as i32), false));
         } else if type_oid == pg_sys::INT8OID {
-            return Ok((pg_sys::Int64GetDatum(n as i64), false));
+            return Ok((pg_sys::Datum::from(n as i64), false));
         } else if type_oid == pg_sys::FLOAT4OID {
             return Ok((pg_sys::Float4GetDatum(n as f32), false));
         } else if type_oid == pg_sys::FLOAT8OID {
@@ -278,11 +278,11 @@ pub(crate) unsafe fn ocaml_value_to_pg_datum(
         } else if type_oid == pg_sys::FLOAT8OID {
             return Ok((pg_sys::Float8GetDatum(f), false));
         } else if type_oid == pg_sys::INT2OID {
-            return Ok((pg_sys::Int16GetDatum(f as i16), false));
+            return Ok((pg_sys::Datum::from(f as i16), false));
         } else if type_oid == pg_sys::INT4OID {
-            return Ok((pg_sys::Int32GetDatum(f as i32), false));
+            return Ok((pg_sys::Datum::from(f as i32), false));
         } else if type_oid == pg_sys::INT8OID {
-            return Ok((pg_sys::Int64GetDatum(f as i64), false));
+            return Ok((pg_sys::Datum::from(f as i64), false));
         } else {
             let datum = string_to_pg_datum(&f.to_string(), type_oid)?;
             return Ok((datum, false));
@@ -295,17 +295,17 @@ pub(crate) unsafe fn ocaml_value_to_pg_datum(
             if ocaml::sys::is_long(field0) {
                 let n = ocaml::sys::int_val(field0);
                 if type_oid == pg_sys::INT2OID {
-                    return Ok((pg_sys::Int16GetDatum(n as i16), false));
+                    return Ok((pg_sys::Datum::from(n as i16), false));
                 } else if type_oid == pg_sys::INT4OID {
-                    return Ok((pg_sys::Int32GetDatum(n as i32), false));
+                    return Ok((pg_sys::Datum::from(n as i32), false));
                 } else if type_oid == pg_sys::INT8OID {
-                    return Ok((pg_sys::Int64GetDatum(n as i64), false));
+                    return Ok((pg_sys::Datum::from(n as i64), false));
                 } else if type_oid == pg_sys::FLOAT4OID {
                     return Ok((pg_sys::Float4GetDatum(n as f32), false));
                 } else if type_oid == pg_sys::FLOAT8OID {
                     return Ok((pg_sys::Float8GetDatum(n as f64), false));
                 } else if type_oid == pg_sys::BOOLOID {
-                    return Ok((pg_sys::BoolGetDatum(n != 0), false));
+                    return Ok((pg_sys::Datum::from(n != 0), false));
                 } else {
                     let datum = string_to_pg_datum(&n.to_string(), type_oid)?;
                     return Ok((datum, false));
@@ -321,11 +321,11 @@ pub(crate) unsafe fn ocaml_value_to_pg_datum(
             } else if type_oid == pg_sys::FLOAT8OID {
                 return Ok((pg_sys::Float8GetDatum(f), false));
             } else if type_oid == pg_sys::INT2OID {
-                return Ok((pg_sys::Int16GetDatum(f as i16), false));
+                return Ok((pg_sys::Datum::from(f as i16), false));
             } else if type_oid == pg_sys::INT4OID {
-                return Ok((pg_sys::Int32GetDatum(f as i32), false));
+                return Ok((pg_sys::Datum::from(f as i32), false));
             } else if type_oid == pg_sys::INT8OID {
-                return Ok((pg_sys::Int64GetDatum(f as i64), false));
+                return Ok((pg_sys::Datum::from(f as i64), false));
             } else {
                 let datum = string_to_pg_datum(&f.to_string(), type_oid)?;
                 return Ok((datum, false));
@@ -340,9 +340,9 @@ pub(crate) unsafe fn ocaml_value_to_pg_datum(
         DATUM_TAG_BOOL if size == 1 => {
             let b = ocaml::sys::int_val(*ocaml::sys::field(val, 0)) != 0;
             if type_oid == pg_sys::BOOLOID {
-                return Ok((pg_sys::BoolGetDatum(b), false));
+                return Ok((pg_sys::Datum::from(b), false));
             } else if type_oid == pg_sys::INT4OID {
-                return Ok((pg_sys::Int32GetDatum(if b { 1 } else { 0 }), false));
+                return Ok((pg_sys::Datum::from(if b { 1i32 } else { 0i32 }), false));
             } else {
                 let datum = string_to_pg_datum(if b { "true" } else { "false" }, type_oid)?;
                 return Ok((datum, false));
