@@ -1,0 +1,5 @@
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "make-fmt", name = "make fmt", language = "system", entry = "make fmt", pass_filenames = false, files = "\\.(rs|ml|mli)$" },
+]
