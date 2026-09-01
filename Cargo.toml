@@ -15,12 +15,16 @@ pg16 = ["pgrx/pg16", "pgrx-tests/pg16" ]
 pg17 = ["pgrx/pg17", "pgrx-tests/pg17" ]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18" ]
 pg19 = ["pgrx/pg19", "pgrx-tests/pg19" ]
-pg_test = []
+pg_test = ["dep:pgrx-tests"]
 pg_bench = ["dep:pgrx-bench"]
 
 [dependencies]
 pgrx = "=0.19.1"
 ocaml = "1"
+
+[dependencies.pgrx-tests]
+version = "=0.19.1"
+optional = true
 
 [dependencies.pgrx-bench]
 version = "=0.19.1"
@@ -28,10 +32,6 @@ optional = true
 
 [build-dependencies]
 pgrx-pg-config = "=0.19.1"
-
-[dev-dependencies]
-[dev-dependencies.pgrx-tests]
-version = "=0.19.1"
 
 [profile.dev]
 panic = "unwind"

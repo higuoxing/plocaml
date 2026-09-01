@@ -118,9 +118,8 @@ module Plocaml = struct
 
   (* Transaction & Subtransaction Control *)
   external subtransaction : (unit -> 'a) -> 'a = "plocaml_subtransaction"
-
-  let commit () : unit = failwith "not implemented"
-  let rollback () : unit = failwith "not implemented"
+  external commit : unit -> unit = "plocaml_commit"
+  external rollback : unit -> unit = "plocaml_rollback"
 
   (* Session / Function Storage *)
   type store = (string, Obj.t) Hashtbl.t

@@ -8,11 +8,16 @@ external _keep_spi_prepare : string -> string array -> unit
 external _keep_spi_execute_plan : 'a -> 'b array -> unit
   = "plocaml_spi_execute_plan"
 
+external _keep_commit : unit -> unit = "plocaml_commit"
+external _keep_rollback : unit -> unit = "plocaml_rollback"
+
 let () =
   ignore _keep_subtransaction;
   ignore _keep_spi_execute;
   ignore _keep_spi_prepare;
-  ignore _keep_spi_execute_plan
+  ignore _keep_spi_execute_plan;
+  ignore _keep_commit;
+  ignore _keep_rollback
 
 let toplevel_initialized = ref false
 
