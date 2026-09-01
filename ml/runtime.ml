@@ -13,6 +13,13 @@ external _keep_rollback : unit -> unit = "plocaml_rollback"
 external _keep_elog : 'a -> 'b -> unit = "plocaml_elog"
 external _keep_quote_literal : string -> string = "plocaml_quote_literal"
 external _keep_quote_ident : string -> string = "plocaml_quote_ident"
+external _keep_cursor_open : string -> 'a = "plocaml_spi_cursor_open"
+
+external _keep_cursor_open_plan : 'a -> 'b array -> 'c
+  = "plocaml_spi_cursor_open_plan"
+
+external _keep_cursor_fetch : 'a -> int -> 'b = "plocaml_spi_cursor_fetch"
+external _keep_cursor_close : 'a -> unit = "plocaml_spi_cursor_close"
 
 let () =
   ignore _keep_subtransaction;
@@ -23,7 +30,11 @@ let () =
   ignore _keep_rollback;
   ignore _keep_elog;
   ignore _keep_quote_literal;
-  ignore _keep_quote_ident
+  ignore _keep_quote_ident;
+  ignore _keep_cursor_open;
+  ignore _keep_cursor_open_plan;
+  ignore _keep_cursor_fetch;
+  ignore _keep_cursor_close
 
 let toplevel_initialized = ref false
 

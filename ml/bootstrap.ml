@@ -49,15 +49,13 @@ module Plocaml = struct
     external execute_plan : plan -> datum array -> spi_result
       = "plocaml_spi_execute_plan"
 
-    let cursor (_query : string) : cursor = failwith "not implemented"
+    external cursor : string -> cursor = "plocaml_spi_cursor_open"
 
-    let cursor_plan (_p : plan) (_args : datum array) : cursor =
-      failwith "not implemented"
+    external cursor_plan : plan -> datum array -> cursor
+      = "plocaml_spi_cursor_open_plan"
 
-    let fetch (_c : cursor) (_count : int) : spi_result =
-      failwith "not implemented"
-
-    let close (_c : cursor) : unit = failwith "not implemented"
+    external fetch : cursor -> int -> spi_result = "plocaml_spi_cursor_fetch"
+    external close : cursor -> unit = "plocaml_spi_cursor_close"
   end
 
   (* Logging and Error Reporting *)
@@ -139,6 +137,7 @@ module Plocaml = struct
   let prepare = SPI.prepare
   let execute_plan = SPI.execute_plan
   let cursor = SPI.cursor
+  let cursor_plan = SPI.cursor_plan
   let fetch = SPI.fetch
   let close = SPI.close
   let debug = Log.debug

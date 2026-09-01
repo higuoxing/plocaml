@@ -1,6 +1,7 @@
 use pgrx::prelude::*;
 
 mod call_handler;
+mod cursor;
 mod error;
 mod fixme;
 mod inline_handler;
@@ -464,6 +465,93 @@ mod tests {
             match res.rows.(0) with
             | [("Quoted Col", PL.Int 999)] -> ()
             | _ -> failwith "unexpected row contents from quoted table/col query"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_cursor_query_and_fetch() {
+        Spi::run(
+            r#"DO $$
+            let cur = PL.cursor "SELECT generate_series(1, 5) AS n" in
+
+            let r1 = PL.fetch cur 2 in
+            if r1.nrows <> 2 then failwith (Printf.sprintf "expected 2 rows, got %d" r1.nrows);
+            (match r1.rows.(0), r1.rows.(1) with
+            | [("n", PL.Int 1)], [("n", PL.Int 2)] -> ()
+            | _ -> failwith "unexpected contents for batch 1");
+
+            let r2 = PL.fetch cur 2 in
+            if r2.nrows <> 2 then failwith (Printf.sprintf "expected 2 rows, got %d" r2.nrows);
+            (match r2.rows.(0), r2.rows.(1) with
+            | [("n", PL.Int 3)], [("n", PL.Int 4)] -> ()
+            | _ -> failwith "unexpected contents for batch 2");
+
+            let r3 = PL.fetch cur 2 in
+            if r3.nrows <> 1 then failwith (Printf.sprintf "expected 1 row, got %d" r3.nrows);
+            (match r3.rows.(0) with
+            | [("n", PL.Int 5)] -> ()
+            | _ -> failwith "unexpected contents for batch 3");
+
+            let r4 = PL.fetch cur 2 in
+            if r4.nrows <> 0 then failwith (Printf.sprintf "expected 0 rows, got %d" r4.nrows);
+
+            PL.close cur
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_cursor_plan_and_fetch() {
+        Spi::run(
+            r#"DO $$
+            let _ = PL.execute "CREATE TEMP TABLE test_cursor_plan_tbl (id int, val text)" in
+            let _ = PL.execute "INSERT INTO test_cursor_plan_tbl VALUES (10, 'ten'), (20, 'twenty'), (30, 'thirty'), (40, 'forty')" in
+
+            let plan = PL.prepare "SELECT id, val FROM test_cursor_plan_tbl WHERE id >= $1 ORDER BY id" [|"int"|] in
+            let cur = PL.cursor_plan plan [|PL.Int 20|] in
+
+            let r1 = PL.fetch cur 2 in
+            if r1.nrows <> 2 then failwith "expected 2 rows";
+            (match r1.rows.(0), r1.rows.(1) with
+            | [("id", PL.Int 20); ("val", PL.String "twenty")], [("id", PL.Int 30); ("val", PL.String "thirty")] -> ()
+            | _ -> failwith "unexpected contents for plan batch 1");
+
+            let r2 = PL.fetch cur 2 in
+            if r2.nrows <> 1 then failwith "expected 1 row";
+            (match r2.rows.(0) with
+            | [("id", PL.Int 40); ("val", PL.String "forty")] -> ()
+            | _ -> failwith "unexpected contents for plan batch 2");
+
+            PL.close cur
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test(error = "PL/OCaml execution failed")]
+    fn test_spi_cursor_fetch_after_close_fails() {
+        Spi::run(
+            r#"DO $$
+            let cur = PL.cursor "SELECT 1 AS n" in
+            PL.close cur;
+            let _ = PL.fetch cur 1 in
+            ()
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_cursor_close_idempotent() {
+        Spi::run(
+            r#"DO $$
+            let cur = PL.cursor "SELECT 1 AS n" in
+            PL.close cur;
+            PL.close cur;
+            PL.close cur
             $$ LANGUAGE plocamlu;"#,
         )
         .expect("DO block failed");
