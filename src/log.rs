@@ -1,7 +1,6 @@
 use pgrx::pg_sys;
 use std::ffi::CString;
 
-#[cfg_attr(target_os = "windows", link(name = "postgres"))]
 unsafe extern "C-unwind" {
     fn errstart(elevel: ::std::os::raw::c_int, domain: *const ::std::os::raw::c_char) -> bool;
     fn errcode(sqlerrcode: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
