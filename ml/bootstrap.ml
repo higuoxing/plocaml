@@ -130,17 +130,15 @@ module Plocaml = struct
   type store = (string, Obj.t) Hashtbl.t
 
   let gd : store = Hashtbl.create 16
-  let get_sd (_oid : int) : store = Hashtbl.create 16
+  let sd_map : (int, store) Hashtbl.t = Hashtbl.create 16
 
-  (* Internal State for Call Handler *)
-  module Internal = struct
-    let current_args = ref ([||] : datum array)
-    let current_result = ref (Obj.repr ())
-    let get_args () = !current_args
-    let set_args (a : datum array) = current_args := a
-    let get_result () = !current_result
-    let set_result (r : Obj.t) = current_result := r
-  end
+  let get_sd (oid : int) : store =
+    match Hashtbl.find_opt sd_map oid with
+    | Some s -> s
+    | None ->
+        let s = Hashtbl.create 16 in
+        Hashtbl.add sd_map oid s;
+        s
 
   (* Direct convenience shortcuts on Plocaml / PL *)
   let execute = SPI.execute
@@ -160,10 +158,7 @@ module Plocaml = struct
   let quote_literal = Quote.literal
   let quote_nullable = Quote.nullable
   let quote_ident = Quote.ident
+  let get_sd = get_sd
 end
 
 module PL = Plocaml
-
-let () =
-  Callback.register "plocaml_set_args" Plocaml.Internal.set_args;
-  Callback.register "plocaml_get_result" Plocaml.Internal.get_result

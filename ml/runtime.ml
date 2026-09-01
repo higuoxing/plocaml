@@ -110,25 +110,46 @@ let is_valid_ident s =
       in
       check 1
 
-let execute_function (prosrc : string) (arg_names : string array) : unit =
+type compiled_entry = { src_code : string; fn : Obj.t array -> Obj.t }
+
+let compiled_functions : (int, compiled_entry) Hashtbl.t = Hashtbl.create 32
+
+let compile_function (fn_oid : int) (prosrc : string) (arg_names : string array)
+    : Obj.t array -> Obj.t =
+  let var_name = Printf.sprintf "__plocaml_fn_%d" fn_oid in
   let nargs = Array.length arg_names in
-  let buf = Buffer.create 256 in
-  Buffer.add_string buf "let () =\n";
-  Buffer.add_string buf "  let args = Plocaml.Internal.get_args () in\n";
+  let buf = Buffer.create (String.length prosrc + 256) in
+  Buffer.add_string buf
+    (Printf.sprintf "let %s (args : Plocaml.datum array) =\n" var_name);
   for i = 0 to nargs - 1 do
     let arg_idx = string_of_int i in
     Buffer.add_string buf
-      ("  let arg" ^ string_of_int (i + 1) ^ " = args.(" ^ arg_idx ^ ") in\n");
+      (Printf.sprintf "  let arg%d = args.(%s) in\n" (i + 1) arg_idx);
     let name = arg_names.(i) in
     if is_valid_ident name && name <> "arg" ^ string_of_int (i + 1) then
-      Buffer.add_string buf ("  let " ^ name ^ " = args.(" ^ arg_idx ^ ") in\n")
+      Buffer.add_string buf
+        (Printf.sprintf "  let %s = args.(%s) in\n" name arg_idx)
   done;
-  Buffer.add_string buf "  Plocaml.Internal.set_result (Obj.repr (begin\n";
+  Buffer.add_string buf
+    (Printf.sprintf "  let sd = Plocaml.get_sd %d in\n" fn_oid);
+  Buffer.add_string buf "  Obj.repr (begin\n";
   Buffer.add_string buf prosrc;
-  Buffer.add_string buf "\n  end))\n";
-  execute_phrases (Buffer.contents buf)
+  Buffer.add_string buf "\n  end)\n;;\n";
+  execute_phrases (Buffer.contents buf);
+  let (fn : Obj.t array -> Obj.t) = Obj.obj (Toploop.getvalue var_name) in
+  Hashtbl.replace compiled_functions fn_oid { src_code = prosrc; fn };
+  fn
+
+let invoke_function (fn_oid : int) (prosrc : string) (arg_names : string array)
+    (args : Obj.t array) : Obj.t =
+  let fn =
+    match Hashtbl.find_opt compiled_functions fn_oid with
+    | Some entry when String.equal entry.src_code prosrc -> entry.fn
+    | _ -> compile_function fn_oid prosrc arg_names
+  in
+  fn args
 
 let () =
   Callback.register "plocaml_init_toplevel" init_toplevel;
   Callback.register "plocaml_execute" execute_inline;
-  Callback.register "plocaml_call_function" execute_function
+  Callback.register "plocaml_invoke_function" invoke_function

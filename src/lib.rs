@@ -833,6 +833,131 @@ mod tests {
 
         Spi::get_one::<i32>("SELECT test_failing_fn();").expect("SELECT failed");
     }
+
+    #[pg_test]
+    fn test_call_handler_sd_storage() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_sd_counter() RETURNS int LANGUAGE plocamlu AS $$
+                let cur = match Hashtbl.find_opt sd "count" with
+                  | Some v -> (Obj.obj v : int) + 1
+                  | None -> 1
+                in
+                Hashtbl.replace sd "count" (Obj.repr cur);
+                cur
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let c1 = Spi::get_one::<i32>("SELECT test_sd_counter();")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(c1, 1);
+
+        let c2 = Spi::get_one::<i32>("SELECT test_sd_counter();")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(c2, 2);
+
+        let c3 = Spi::get_one::<i32>("SELECT test_sd_counter();")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(c3, 3);
+    }
+
+    #[pg_test]
+    fn test_call_handler_gd_storage() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_gd_setter(k text, v text) RETURNS void LANGUAGE plocamlu AS $$
+                match k, v with
+                | PL.String key, PL.String value ->
+                    Hashtbl.replace PL.gd key (Obj.repr value)
+                | _ -> ()
+            $$;
+
+            CREATE FUNCTION test_gd_getter(k text) RETURNS text LANGUAGE plocamlu AS $$
+                match k with
+                | PL.String key ->
+                    (match Hashtbl.find_opt PL.gd key with
+                     | Some v -> (Obj.obj v : string)
+                     | None -> "not found")
+                | _ -> "bad key"
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        Spi::run("SELECT test_gd_setter('greeting', 'hello from GD');").expect("setter failed");
+        let val = Spi::get_one::<String>("SELECT test_gd_getter('greeting');")
+            .expect("getter failed")
+            .expect("null result");
+        assert_eq!(val, "hello from GD");
+    }
+
+    #[pg_test]
+    fn test_call_handler_create_or_replace_cache_invalidation() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_cached_repl(x int) RETURNS int LANGUAGE plocamlu AS $$
+                match x with PL.Int n -> n * 2 | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        let v1 = Spi::get_one::<i32>("SELECT test_cached_repl(10);")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(v1, 20);
+
+        // Replace the function definition with new behavior
+        Spi::run(
+            r#"
+            CREATE OR REPLACE FUNCTION test_cached_repl(x int) RETURNS int LANGUAGE plocamlu AS $$
+                match x with PL.Int n -> n * 10 | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE OR REPLACE FUNCTION failed");
+
+        let v2 = Spi::get_one::<i32>("SELECT test_cached_repl(10);")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(v2, 100);
+    }
+
+    #[pg_test]
+    fn test_call_handler_reentrant_recursion() {
+        Spi::run(
+            r#"
+            CREATE FUNCTION test_reentrant_b(factor int, num int) RETURNS int LANGUAGE plocamlu AS $$
+                match factor, num with
+                | PL.Int f, PL.Int v -> f * v
+                | _ -> 0
+            $$;
+
+            CREATE FUNCTION test_reentrant_a(x int) RETURNS int LANGUAGE plocamlu AS $$
+                match x with
+                | PL.Int n ->
+                    let q = Printf.sprintf "SELECT test_reentrant_b(%d, %d) AS res" (n + 1) (n + 2) in
+                    let res = PL.execute q in
+                    (match res.rows.(0) with
+                     | [("res", PL.Int r)] -> r
+                     | _ -> 0)
+                | _ -> 0
+            $$;
+            "#,
+        )
+        .expect("CREATE FUNCTION failed");
+
+        // (3 + 1) * (3 + 2) = 4 * 5 = 20
+        let res = Spi::get_one::<i32>("SELECT test_reentrant_a(3);")
+            .expect("SELECT failed")
+            .expect("null result");
+        assert_eq!(res, 20);
+    }
 }
 
 #[cfg(test)]

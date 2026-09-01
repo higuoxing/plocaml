@@ -83,15 +83,6 @@ pub extern "C-unwind" fn plocaml_call_handler(fcinfo: pg_sys::FunctionCallInfo) 
         }
     }
 
-    // Set arguments in OCaml runtime
-    let set_args_fn = unsafe { ocaml::Value::named("plocaml_set_args") }
-        .unwrap_or_else(|| pgrx::error!("plocaml_set_args callback not registered"));
-    unsafe {
-        if let Err(err_msg) = crate::error::call_exn(set_args_fn, &[arr_val]) {
-            crate::error::raise_ocaml_error(err_msg);
-        }
-    }
-
     // Build argument names array for OCaml
     let names_arr_val = unsafe {
         let names_arr = ocaml::sys::caml_alloc(pronargs, 0);
@@ -105,21 +96,14 @@ pub extern "C-unwind" fn plocaml_call_handler(fcinfo: pg_sys::FunctionCallInfo) 
         }
     }
 
-    // Call execute_function
-    let call_fn = unsafe { ocaml::Value::named("plocaml_call_function") }
-        .unwrap_or_else(|| pgrx::error!("plocaml_call_function callback not registered"));
+    // Invoke compiled OCaml function (automatically compiles and caches on first call or when source changes)
+    let invoke_fn = unsafe { ocaml::Value::named("plocaml_invoke_function") }
+        .unwrap_or_else(|| pgrx::error!("plocaml_invoke_function callback not registered"));
+    let fn_oid_val = unsafe { ocaml::Value::new(ocaml::sys::val_int(fn_oid.to_u32() as isize)) };
     let prosrc_val = unsafe { ocaml::Value::string(&prosrc) };
-    unsafe {
-        if let Err(err_msg) = crate::error::call_exn(call_fn, &[prosrc_val, names_arr_val]) {
-            crate::error::raise_ocaml_error(err_msg);
-        }
-    }
 
-    // Get return value from OCaml runtime
-    let get_result_fn = unsafe { ocaml::Value::named("plocaml_get_result") }
-        .unwrap_or_else(|| pgrx::error!("plocaml_get_result callback not registered"));
     let result_val = unsafe {
-        match crate::error::call_exn(get_result_fn, &[ocaml::Value::new(ocaml::sys::UNIT)]) {
+        match crate::error::call_exn(invoke_fn, &[fn_oid_val, prosrc_val, names_arr_val, arr_val]) {
             Ok(v) => v,
             Err(err_msg) => crate::error::raise_ocaml_error(err_msg),
         }
