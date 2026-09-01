@@ -2,6 +2,7 @@ use pgrx::prelude::*;
 
 mod fixme;
 mod plocaml_call_handler;
+mod plocaml_error;
 mod plocaml_inline_handler;
 mod plocaml_validator;
 
@@ -34,7 +35,12 @@ mod tests {
 
     #[pg_test]
     fn test_inline_handler() {
-        Spi::run("DO $$ () $$ LANGUAGE plocamlu;").expect("DO block failed");
+        Spi::run("DO $$ let x = 1 + 2 in ();; () $$ LANGUAGE plocamlu;").expect("DO block failed");
+    }
+
+    #[pg_test(error = "PL/OCaml execution failed")]
+    fn test_ocaml_failwith_bridging() {
+        Spi::run("DO $$ failwith \"some error\" $$ LANGUAGE plocamlu;").expect("DO block failed");
     }
 }
 

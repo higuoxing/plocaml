@@ -2,4 +2,5 @@
  (targets bootstrap.c)
  (deps bootstrap.ml)
  (action
-  (run ocamlc -output-complete-obj -o %{targets} %{deps})))
+  (run ocamlc -I +compiler-libs ocamlcommon.cma ocamlbytecomp.cma ocamltoplevel.cma -output-complete-obj -o %{targets} %{deps})))
+

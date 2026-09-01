@@ -50,10 +50,11 @@ pub extern "C-unwind" fn plocaml_inline_handler(fcinfo: pg_sys::FunctionCallInfo
 
     // Execute the inline OCaml code if plocaml_execute callback is registered
     if let Some(execute_fn) = unsafe { ocaml::Value::named("plocaml_execute") } {
-        let gc = ocaml::Runtime::init();
         let source_val = unsafe { ocaml::Value::string(source_text) };
         unsafe {
-            let _ = execute_fn.call1::<ocaml::Value>(&gc, source_val);
+            if let Err(err_msg) = crate::plocaml_error::call_exn(execute_fn, &[source_val]) {
+                crate::plocaml_error::raise_ocaml_error(err_msg);
+            }
         }
     }
 
