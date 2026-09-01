@@ -31,6 +31,11 @@ mod tests {
                 .expect("SPI query failed");
         assert!(has_lang == Some(true), "plocamlu language not found");
     }
+
+    #[pg_test]
+    fn test_inline_handler() {
+        Spi::run("DO $$ () $$ LANGUAGE plocamlu;").expect("DO block failed");
+    }
 }
 
 /// This module is required by `cargo pgrx test` invocations.

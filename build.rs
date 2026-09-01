@@ -11,9 +11,9 @@ fn get_pg_config() -> PgConfig {
     let pgrx = Pgrx::from_config().expect("failed to load pgrx configuration");
     for pgver in SUPPORTED_VERSIONS() {
         if std::env::var(format!("CARGO_FEATURE_PG{}", pgver.major)).is_ok() {
-            return pgrx
-                .get(&format!("pg{}", pgver.major))
-                .unwrap_or_else(|e| panic!("failed to get pg_config for pg{}: {}", pgver.major, e));
+            return pgrx.get(&format!("pg{}", pgver.major)).unwrap_or_else(|e| {
+                panic!("failed to get pg_config for pg{}: {}", pgver.major, e)
+            });
         }
     }
 
@@ -79,7 +79,11 @@ fn main() {
             .arg("--cppflags")
             .output()
             .unwrap_or_else(|e| {
-                panic!("failed to run {} --cppflags: {}", pg_config_bin.display(), e)
+                panic!(
+                    "failed to run {} --cppflags: {}",
+                    pg_config_bin.display(),
+                    e
+                )
             })
             .stdout,
     )
@@ -130,8 +134,7 @@ fn main() {
     }
 
     for line in config_output.lines() {
-        if line.starts_with("bytecomp_c_libraries:")
-            || line.starts_with("compression_c_libraries:")
+        if line.starts_with("bytecomp_c_libraries:") || line.starts_with("compression_c_libraries:")
         {
             let flags = line.splitn(2, ':').nth(1).unwrap_or("").trim();
             for flag in flags.split_whitespace() {
