@@ -5,6 +5,7 @@ mod error;
 mod fixme;
 mod inline_handler;
 mod log;
+mod quote;
 mod spi;
 mod subtransaction;
 mod typeio;
@@ -390,6 +391,79 @@ mod tests {
             try
               PL.Log.error "Caught error"
             with Failure _ -> ()
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_quote_literal() {
+        Spi::run(
+            r#"DO $$
+            let s1 = PL.Quote.literal "hello" in
+            if s1 <> "'hello'" then failwith (Printf.sprintf "unexpected s1: %s" s1);
+
+            let s2 = PL.Quote.literal "O'Reilly" in
+            if s2 <> "'O''Reilly'" then failwith (Printf.sprintf "unexpected s2: %s" s2);
+
+            let s3 = PL.Quote.literal "tab\tnewline\n" in
+            let res = PL.execute (Printf.sprintf "SELECT %s AS val" s3) in
+            match res.rows.(0) with
+            | [("val", PL.String "tab\tnewline\n")] -> ()
+            | _ -> failwith "unexpected query result for quoted literal"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_quote_nullable() {
+        Spi::run(
+            r#"DO $$
+            let n1 = PL.Quote.nullable None in
+            if n1 <> "NULL" then failwith (Printf.sprintf "unexpected n1: %s" n1);
+
+            let n2 = PL.Quote.nullable (Some "hello") in
+            if n2 <> "'hello'" then failwith (Printf.sprintf "unexpected n2: %s" n2);
+
+            let n3 = PL.Quote.nullable (Some "O'Reilly") in
+            if n3 <> "'O''Reilly'" then failwith (Printf.sprintf "unexpected n3: %s" n3);
+
+            let res_null = PL.execute (Printf.sprintf "SELECT %s AS val" n1) in
+            match res_null.rows.(0) with
+            | [("val", PL.Null)] -> ()
+            | _ -> failwith "expected NULL from quote_nullable None";
+
+            let res_val = PL.execute (Printf.sprintf "SELECT %s AS val" n2) in
+            match res_val.rows.(0) with
+            | [("val", PL.String "hello")] -> ()
+            | _ -> failwith "expected string from quote_nullable (Some ...)"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_quote_ident() {
+        Spi::run(
+            r#"DO $$
+            let id1 = PL.Quote.ident "simple_col" in
+            if id1 <> "simple_col" then failwith (Printf.sprintf "unexpected id1: %s" id1);
+
+            let id2 = PL.Quote.ident "My Table" in
+            if id2 <> "\"My Table\"" then failwith (Printf.sprintf "unexpected id2: %s" id2);
+
+            let id3 = PL.Quote.ident "select" in
+            if id3 <> "\"select\"" then failwith (Printf.sprintf "unexpected id3: %s" id3);
+
+            let tname = PL.Quote.ident "Temp Quoted Table" in
+            let cname = PL.Quote.ident "Quoted Col" in
+            let _ = PL.execute (Printf.sprintf "CREATE TEMP TABLE %s (%s int)" tname cname) in
+            let _ = PL.execute (Printf.sprintf "INSERT INTO %s (%s) VALUES (999)" tname cname) in
+            let res = PL.execute (Printf.sprintf "SELECT %s FROM %s" cname tname) in
+            match res.rows.(0) with
+            | [("Quoted Col", PL.Int 999)] -> ()
+            | _ -> failwith "unexpected row contents from quoted table/col query"
             $$ LANGUAGE plocamlu;"#,
         )
         .expect("DO block failed");

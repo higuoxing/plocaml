@@ -11,6 +11,8 @@ external _keep_spi_execute_plan : 'a -> 'b array -> unit
 external _keep_commit : unit -> unit = "plocaml_commit"
 external _keep_rollback : unit -> unit = "plocaml_rollback"
 external _keep_elog : 'a -> 'b -> unit = "plocaml_elog"
+external _keep_quote_literal : string -> string = "plocaml_quote_literal"
+external _keep_quote_ident : string -> string = "plocaml_quote_ident"
 
 let () =
   ignore _keep_subtransaction;
@@ -19,7 +21,9 @@ let () =
   ignore _keep_spi_execute_plan;
   ignore _keep_commit;
   ignore _keep_rollback;
-  ignore _keep_elog
+  ignore _keep_elog;
+  ignore _keep_quote_literal;
+  ignore _keep_quote_ident
 
 let toplevel_initialized = ref false
 

@@ -116,9 +116,11 @@ module Plocaml = struct
 
   (* String Quoting *)
   module Quote = struct
-    let literal (_s : string) : string = failwith "not implemented"
-    let nullable (_s : string option) : string = failwith "not implemented"
-    let ident (_s : string) : string = failwith "not implemented"
+    external literal : string -> string = "plocaml_quote_literal"
+    external ident : string -> string = "plocaml_quote_ident"
+
+    let nullable (s : string option) : string =
+      match s with None -> "NULL" | Some s -> literal s
   end
 
   (* Transaction & Subtransaction Control *)
