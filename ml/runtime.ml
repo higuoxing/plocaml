@@ -2,9 +2,17 @@
 external _keep_subtransaction : (unit -> 'a) -> 'a = "plocaml_subtransaction"
 external _keep_spi_execute : string -> unit = "plocaml_spi_execute"
 
+external _keep_spi_prepare : string -> string array -> unit
+  = "plocaml_spi_prepare"
+
+external _keep_spi_execute_plan : 'a -> 'b array -> unit
+  = "plocaml_spi_execute_plan"
+
 let () =
   ignore _keep_subtransaction;
-  ignore _keep_spi_execute
+  ignore _keep_spi_execute;
+  ignore _keep_spi_prepare;
+  ignore _keep_spi_execute_plan
 
 let toplevel_initialized = ref false
 

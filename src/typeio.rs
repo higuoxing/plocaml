@@ -142,3 +142,90 @@ pub(crate) unsafe fn heap_tuple_to_row_list(
 
     list
 }
+
+/// Converts a string into PostgreSQL's internal binary Datum representation
+/// for `type_oid` by invoking the type's registered input function (`typinput`).
+///
+/// This serves as the counterpart to `OidOutputFunctionCall` used in `make_ocaml_datum`,
+/// allowing arbitrary PostgreSQL types (such as `numeric`, `timestamp`, `uuid`, `jsonb`, etc.)
+/// to be parsed from string representations when passing parameters to prepared SPI plans.
+pub(crate) unsafe fn string_to_pg_datum(
+    s: &str,
+    type_oid: pg_sys::Oid,
+) -> Result<pg_sys::Datum, String> {
+    let mut typinput = pg_sys::InvalidOid;
+    let mut typioparam = pg_sys::InvalidOid;
+    pg_sys::getTypeInputInfo(type_oid, &mut typinput, &mut typioparam);
+    let cstr =
+        std::ffi::CString::new(s).map_err(|_| "String argument contains null byte".to_string())?;
+    let datum = pg_sys::OidInputFunctionCall(typinput, cstr.as_ptr().cast_mut(), typioparam, -1);
+    Ok(datum)
+}
+
+pub(crate) unsafe fn ocaml_datum_to_pg_datum(
+    val: ocaml::sys::Value,
+    type_oid: pg_sys::Oid,
+) -> Result<(pg_sys::Datum, bool), String> {
+    if ocaml::sys::is_long(val) {
+        // Tag Null (int 0)
+        return Ok((pg_sys::Datum::from(0), true));
+    }
+
+    let tag = ocaml::sys::tag_val(val);
+    let datum = match tag {
+        DATUM_TAG_INT => {
+            let n = ocaml::sys::int_val(*ocaml::sys::field(val, 0));
+            if type_oid == pg_sys::INT2OID {
+                pg_sys::Int16GetDatum(n as i16)
+            } else if type_oid == pg_sys::INT4OID {
+                pg_sys::Int32GetDatum(n as i32)
+            } else if type_oid == pg_sys::INT8OID {
+                pg_sys::Int64GetDatum(n as i64)
+            } else if type_oid == pg_sys::FLOAT4OID {
+                pg_sys::Float4GetDatum(n as f32)
+            } else if type_oid == pg_sys::FLOAT8OID {
+                pg_sys::Float8GetDatum(n as f64)
+            } else if type_oid == pg_sys::BOOLOID {
+                pg_sys::BoolGetDatum(n != 0)
+            } else {
+                string_to_pg_datum(&n.to_string(), type_oid)?
+            }
+        }
+        DATUM_TAG_FLOAT => {
+            let f = ocaml::Value::new(*ocaml::sys::field(val, 0)).double_val();
+            if type_oid == pg_sys::FLOAT4OID {
+                pg_sys::Float4GetDatum(f as f32)
+            } else if type_oid == pg_sys::FLOAT8OID {
+                pg_sys::Float8GetDatum(f)
+            } else if type_oid == pg_sys::INT2OID {
+                pg_sys::Int16GetDatum(f as i16)
+            } else if type_oid == pg_sys::INT4OID {
+                pg_sys::Int32GetDatum(f as i32)
+            } else if type_oid == pg_sys::INT8OID {
+                pg_sys::Int64GetDatum(f as i64)
+            } else {
+                string_to_pg_datum(&f.to_string(), type_oid)?
+            }
+        }
+        DATUM_TAG_STRING => {
+            let s_val = ocaml::Value::new(*ocaml::sys::field(val, 0));
+            let s: &str = ocaml::FromValue::from_value(s_val);
+            string_to_pg_datum(s, type_oid)?
+        }
+        DATUM_TAG_BOOL => {
+            let b = ocaml::sys::int_val(*ocaml::sys::field(val, 0)) != 0;
+            if type_oid == pg_sys::BOOLOID {
+                pg_sys::BoolGetDatum(b)
+            } else if type_oid == pg_sys::INT4OID {
+                pg_sys::Int32GetDatum(if b { 1 } else { 0 })
+            } else {
+                string_to_pg_datum(if b { "true" } else { "false" }, type_oid)?
+            }
+        }
+        _ => {
+            return Err(format!("Unsupported datum tag {tag} for SPI argument"));
+        }
+    };
+
+    Ok((datum, false))
+}

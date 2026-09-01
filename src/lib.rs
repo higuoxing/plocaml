@@ -139,6 +139,52 @@ mod tests {
         )
         .expect("DO block failed");
     }
+
+    #[pg_test]
+    fn test_spi_prepare_and_execute_plan() {
+        Spi::run(
+            r#"DO $$
+            let plan = PL.prepare "SELECT $1::int * 2 AS doubled, $2::text || ' world' AS greeting" [|"int"; "text"|] in
+            let res = PL.execute_plan plan [|PL.Int 21; PL.String "hello"|] in
+            if res.nrows <> 1 then failwith "wrong nrows";
+            match res.rows.(0) with
+            | [("doubled", PL.Int 42); ("greeting", PL.String "hello world")] -> ()
+            | _ -> failwith "unexpected row contents from plan"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_prepare_dml_and_multiple_execs() {
+        Spi::run(
+            r#"DO $$
+            let _ = PL.execute "CREATE TEMP TABLE test_plan (id int, val text)" in
+            let plan_insert = PL.prepare "INSERT INTO test_plan VALUES ($1, $2)" [|"int"; "text"|] in
+            let _ = PL.execute_plan plan_insert [|PL.Int 1; PL.String "first"|] in
+            let _ = PL.execute_plan plan_insert [|PL.Int 2; PL.String "second"|] in
+            let plan_select = PL.prepare "SELECT id, val FROM test_plan WHERE id = $1" [|"int"|] in
+            let res = PL.execute_plan plan_select [|PL.Int 2|] in
+            if res.nrows <> 1 then failwith "wrong nrows";
+            match res.rows.(0) with
+            | [("id", PL.Int 2); ("val", PL.String "second")] -> ()
+            | _ -> failwith "unexpected row contents for id 2"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test(error = "PL/OCaml execution failed")]
+    fn test_spi_execute_plan_wrong_args_count() {
+        Spi::run(
+            r#"DO $$
+            let plan = PL.prepare "SELECT $1::int" [|"int"|] in
+            let _ = PL.execute_plan plan [|PL.Int 1; PL.Int 2|] in
+            ()
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
 }
 
 /// This module is required by `cargo pgrx test` invocations.
