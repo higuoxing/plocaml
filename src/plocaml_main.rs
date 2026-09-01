@@ -4,7 +4,9 @@ mod fixme;
 mod plocaml_call_handler;
 mod plocaml_error;
 mod plocaml_inline_handler;
+mod plocaml_spi;
 mod plocaml_subtransaction;
+mod plocaml_typeio;
 mod plocaml_validator;
 
 ::pgrx::pg_module_magic!(name, version);
@@ -85,6 +87,54 @@ mod tests {
                     PL.subtransaction (fun () -> failwith "nested error")
                 with Failure _ -> ()
             )
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_execute_select() {
+        Spi::run(
+            r#"DO $$
+            let res = PL.execute "SELECT 42 AS num, 'hello' AS msg, true AS flag" in
+            if res.nrows <> 1 then failwith "wrong nrows";
+            match res.rows.(0) with
+            | [("num", PL.Int 42); ("msg", PL.String "hello"); ("flag", PL.Bool true)] -> ()
+            | _ -> failwith "unexpected row contents"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_execute_dml_and_subtransaction() {
+        Spi::run(
+            r#"DO $$
+            let _ = PL.execute "CREATE TEMP TABLE test_subxact (id int, name text)" in
+            let _ = PL.execute "INSERT INTO test_subxact VALUES (1, 'initial')" in
+            (try
+               PL.subtransaction (fun () ->
+                 let _ = PL.execute "INSERT INTO test_subxact VALUES (2, 'temporary')" in
+                 failwith "abort inner")
+             with Failure _ -> ());
+            let res = PL.execute "SELECT id, name FROM test_subxact ORDER BY id" in
+            if res.nrows <> 1 then failwith "wrong nrows after rollback";
+            match res.rows.(0) with
+            | [("id", PL.Int 1); ("name", PL.String "initial")] -> ()
+            | _ -> failwith "unexpected row contents after rollback"
+            $$ LANGUAGE plocamlu;"#,
+        )
+        .expect("DO block failed");
+    }
+
+    #[pg_test]
+    fn test_spi_execute_error_caught() {
+        Spi::run(
+            r#"DO $$
+            try
+              let _ = PL.execute "SELECT * FROM non_existent_table_12345" in
+              failwith "query should have failed"
+            with Failure _ -> ()
             $$ LANGUAGE plocamlu;"#,
         )
         .expect("DO block failed");

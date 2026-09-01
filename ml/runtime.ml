@@ -1,7 +1,11 @@
 (* Keep C primitives in bytecode symbol table so Toploop can dynamically resolve them *)
 external _keep_subtransaction : (unit -> 'a) -> 'a = "plocaml_subtransaction"
+external _keep_spi_execute : string -> unit = "plocaml_spi_execute"
 
-let () = ignore _keep_subtransaction
+let () =
+  ignore _keep_subtransaction;
+  ignore _keep_spi_execute
+
 let toplevel_initialized = ref false
 
 let execute_phrases (source : string) : unit =

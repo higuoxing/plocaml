@@ -43,7 +43,7 @@ module Plocaml = struct
 
   (* SPI Operations *)
   module SPI = struct
-    let execute (_query : string) : spi_result = failwith "not implemented"
+    external execute : string -> spi_result = "plocaml_spi_execute"
 
     let prepare (_query : string) (_param_types : string array) : plan =
       failwith "not implemented"
